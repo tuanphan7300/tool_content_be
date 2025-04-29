@@ -8,8 +8,9 @@ import (
 var InfaCfg InfaConfig
 
 type InfaConfig struct {
-	ApiKey    string `envconfig:"API_KEY" default:""`
-	GeminiKey string `envconfig:"GEMINI_KEY" default:""`
+	ApiKey       string `envconfig:"API_KEY" default:""`
+	GeminiKey    string `envconfig:"GEMINI_KEY" default:""`
+	JWTACCESSKEY string `envconfig:"JWTACCESSKEY" default:""`
 }
 
 func (cfg *InfaConfig) LoadConfig() {

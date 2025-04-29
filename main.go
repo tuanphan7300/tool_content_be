@@ -34,6 +34,5 @@ func main() {
 		MaxAge:           12 * time.Hour,
 	}))
 	router.SetupRoutes(r)
-
 	r.Run(":8080") // chạy ở localhost:8080
 }

@@ -43,7 +43,11 @@ pipeline {
       steps {
         echo "Running Docker containers for branch ${BRANCH_NAME}"
         sh '''
-          docker-compose down || true
+          # Force remove existing containers and volumes
+          docker-compose down -v --remove-orphans
+          docker rm -f ${APP_NAME} mysql-db || true
+          
+          # Start containers
           docker-compose up -d
         '''
       }

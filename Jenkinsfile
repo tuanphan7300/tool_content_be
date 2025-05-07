@@ -1,7 +1,7 @@
 pipeline {
   agent any
   environment {
-    DEPLOY_DIR = "/var/www/${env.BRANCH_NAME}.localtest.me"
+    DEPLOY_DIR = "${env.WORKSPACE}/deploy/${env.BRANCH_NAME}"
   }
   stages {
     stage('Checkout') {
@@ -33,7 +33,7 @@ pipeline {
 
   post {
     success {
-      echo "Deployed branch ${env.BRANCH_NAME} successfully"
+      echo "Deployed branch ${env.BRANCH_NAME} successfully to ${DEPLOY_DIR}"
     }
   }
 }

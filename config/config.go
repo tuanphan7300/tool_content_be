@@ -11,6 +11,10 @@ type InfaConfig struct {
 	ApiKey       string `envconfig:"API_KEY" default:""`
 	GeminiKey    string `envconfig:"GEMINI_KEY" default:""`
 	JWTACCESSKEY string `envconfig:"JWTACCESSKEY" default:""`
+	DB_HOST      string `envconfig:"DB_HOST" default:""`
+	DB_PORT      string `envconfig:"DB_PORT" default:""`
+	DB_USER      string `envconfig:"DB_USER" default:""`
+	DB_PASSWORD  string `envconfig:"DB_PASSWORD" default:""`
 }
 
 func (cfg *InfaConfig) LoadConfig() {

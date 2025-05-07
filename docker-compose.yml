@@ -40,6 +40,10 @@ services:
     container_name: nginx-${BRANCH_NAME}
     ports:
       - "80:80"
+    environment:
+      - APP_NAME=${APP_NAME}
+      - APP_PORT=${APP_PORT}
+      - SUBDOMAIN=${SUBDOMAIN}
     volumes:
       - ./nginx/template.conf:/etc/nginx/templates/default.conf.template
       - nginx_conf:/etc/nginx/conf.d

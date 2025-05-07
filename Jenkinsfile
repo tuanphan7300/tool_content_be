@@ -48,8 +48,14 @@ pipeline {
           # Generate Nginx config
           envsubst < nginx/template.conf > /tmp/nginx-${BRANCH_NAME}.conf
           
-          # Start containers
-          SUBDOMAIN=${SUBDOMAIN} docker-compose -p ${BRANCH_NAME} up -d
+          # Start containers with all required environment variables
+          SUBDOMAIN=${SUBDOMAIN} \
+          APP_NAME=${APP_NAME} \
+          APP_PORT=${APP_PORT} \
+          MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD} \
+          MYSQL_DATABASE=${MYSQL_DATABASE} \
+          MYSQL_PORT=${MYSQL_PORT} \
+          docker-compose -p ${BRANCH_NAME} up -d
           
           # Wait for nginx to be ready
           echo "Waiting for nginx to be ready..."

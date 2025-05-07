@@ -8,8 +8,6 @@ pipeline {
     APP_PORT = "8080"
     MYSQL_ROOT_PASSWORD = "root"
     MYSQL_DATABASE = "tool"
-    MYSQL_USER = "root"
-    MYSQL_PASSWORD = "root"
     MYSQL_PORT = "3306"
   }
 

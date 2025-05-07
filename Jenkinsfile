@@ -52,6 +52,10 @@ pipeline {
           # Wait for nginx container to be ready
           echo "Waiting for nginx container to be ready..."
           sleep 10
+          
+          # Debug: List all containers
+          echo "Listing all containers:"
+          docker ps -a
         '''
       }
     }
@@ -63,14 +67,22 @@ pipeline {
           # Generate Nginx config from template
           envsubst < nginx/template.conf > /tmp/nginx-${BRANCH_NAME}.conf
           
+          # Get the actual nginx container name
+          NGINX_CONTAINER=$(docker ps -q -f name=${BRANCH_NAME}_nginx)
+          if [ -z "$NGINX_CONTAINER" ]; then
+            echo "Error: Nginx container not found!"
+            exit 1
+          fi
+          echo "Found nginx container: $NGINX_CONTAINER"
+          
           # Create conf.d directory if it doesn't exist
-          docker exec ${BRANCH_NAME}_nginx_1 mkdir -p /etc/nginx/conf.d
+          docker exec $NGINX_CONTAINER mkdir -p /etc/nginx/conf.d
           
           # Copy config to Nginx container
-          docker cp /tmp/nginx-${BRANCH_NAME}.conf ${BRANCH_NAME}_nginx_1:/etc/nginx/conf.d/
+          docker cp /tmp/nginx-${BRANCH_NAME}.conf $NGINX_CONTAINER:/etc/nginx/conf.d/
           
           # Reload Nginx
-          docker exec ${BRANCH_NAME}_nginx_1 nginx -s reload
+          docker exec $NGINX_CONTAINER nginx -s reload
         '''
       }
     }

@@ -9,6 +9,7 @@ pipeline {
     MYSQL_ROOT_PASSWORD = "root"
     MYSQL_DATABASE = "tool"
     MYSQL_PORT = "3306"
+    SUBDOMAIN = "${BRANCH_NAME}"
   }
 
   stages {
@@ -42,11 +43,27 @@ pipeline {
         echo "Running Docker containers for branch ${BRANCH_NAME}"
         sh '''
           # Force remove existing containers and volumes
-          docker-compose down -v --remove-orphans
-          docker rm -f ${APP_NAME} mysql-db || true
+          docker-compose -p ${BRANCH_NAME} down -v --remove-orphans
+          docker rm -f ${APP_NAME} mysql-db-${BRANCH_NAME} || true
           
-          # Start containers
-          docker-compose up -d
+          # Start containers with project name
+          SUBDOMAIN=${SUBDOMAIN} docker-compose -p ${BRANCH_NAME} up -d
+        '''
+      }
+    }
+
+    stage('Update Nginx Config') {
+      steps {
+        echo "Updating Nginx configuration for ${SUBDOMAIN}"
+        sh '''
+          # Generate Nginx config from template
+          envsubst < nginx/template.conf > /tmp/nginx-${BRANCH_NAME}.conf
+          
+          # Copy config to Nginx container
+          docker cp /tmp/nginx-${BRANCH_NAME}.conf nginx:/etc/nginx/conf.d/
+          
+          # Reload Nginx
+          docker exec nginx nginx -s reload
         '''
       }
     }
@@ -54,7 +71,10 @@ pipeline {
 
   post {
     success {
-      echo "Deployed ${IMAGE_NAME}:${BRANCH_NAME} successfully"
+      echo "Deployed ${IMAGE_NAME}:${BRANCH_NAME} successfully to ${SUBDOMAIN}.localtest.me"
+    }
+    failure {
+      echo "Failed to deploy ${IMAGE_NAME}:${BRANCH_NAME}"
     }
   }
 }

@@ -4,12 +4,8 @@ services:
   app:
     image: tool-content-be:${BRANCH_NAME:-latest}
     container_name: ${APP_NAME}
-#    build:
-#      context: .
-#      dockerfile: Dockerfile
-      # Chú ý: bạn có thể gỡ `build` nếu Jenkins đã build trước và chỉ `image:` là đủ
     ports:
-      - "3000:${APP_PORT}"
+      - "${APP_PORT}"
     environment:
       - DB_HOST=db
       - DB_PORT=${MYSQL_PORT}
@@ -24,15 +20,13 @@ services:
 
   db:
     image: mysql:8.0
-    container_name: mysql-db
+    container_name: mysql-db-${BRANCH_NAME}
     restart: always
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE}
     volumes:
-      - mysql_data:/var/lib/mysql
-    ports:
-      - "3306:3306"
+      - mysql_data_${BRANCH_NAME}:/var/lib/mysql
     networks:
       - backend
     healthcheck:
@@ -41,8 +35,20 @@ services:
       timeout: 5s
       retries: 20
 
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-router
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/template.conf:/etc/nginx/templates/default.conf.template
+    networks:
+      - backend
+    depends_on:
+      - app
+
 networks:
   backend:
 
 volumes:
-  mysql_data:
+  mysql_data_${BRANCH_NAME}:

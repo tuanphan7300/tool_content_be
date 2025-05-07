@@ -37,19 +37,25 @@ services:
 
   nginx:
     image: nginx:alpine
-    container_name: nginx-router
+    container_name: nginx-${BRANCH_NAME}
     ports:
       - "80:80"
     volumes:
       - ./nginx/template.conf:/etc/nginx/templates/default.conf.template
-      - ./nginx/conf.d:/etc/nginx/conf.d
+      - nginx_conf:/etc/nginx/conf.d
     networks:
       - backend
     depends_on:
       - app
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 networks:
   backend:
 
 volumes:
   mysql_data:
+  nginx_conf:

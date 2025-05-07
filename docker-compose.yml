@@ -17,7 +17,8 @@ services:
       - DB_PASSWORD=${MYSQL_ROOT_PASSWORD}
       - DB_NAME=${MYSQL_DATABASE}
     depends_on:
-      - db  
+      db:
+        condition: service_healthy
     networks:
       - backend
 
@@ -34,6 +35,11 @@ services:
       - "3306:3306"
     networks:
       - backend
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
 networks:
   backend:

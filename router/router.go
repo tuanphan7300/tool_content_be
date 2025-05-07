@@ -15,6 +15,6 @@ func SetupRoutes(r *gin.Engine) {
 	r.GET("/history/:id", handler.GetHistoryByID)
 	r.POST("/register", handler.RegisterHandler)
 	r.POST("/login", handler.LoginHandler)
-	r.POST("/ping", handler.PingPongHandler)
+	r.GET("/ping", handler.PingPongHandler)
 	//r.Use(middleware.AuthMiddleware())
 }

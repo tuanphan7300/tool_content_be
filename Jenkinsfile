@@ -2,8 +2,8 @@ pipeline {
   agent any
 
   environment {
-    DEPLOY_BASE = "/var/jenkins_home/workspace/${JOB_NAME}/deploy"
-    DEPLOY_DIR = "${DEPLOY_BASE}/${env.BRANCH_NAME}"
+    IMAGE_NAME = "tool-content-be"
+    DEPLOY_DIR = "/var/jenkins_home/deploy/${env.BRANCH_NAME}"
   }
 
   stages {
@@ -13,9 +13,9 @@ pipeline {
       }
     }
 
-    stage('Build') {
+    stage('Build binary') {
       steps {
-        echo "🔨 Building Golang project on branch ${env.BRANCH_NAME}"
+        echo "Building Go binary..."
         sh '''
           go mod tidy
           go build -o app
@@ -23,22 +23,21 @@ pipeline {
       }
     }
 
-    stage('Deploy') {
+    stage('Build Docker image') {
       steps {
-        echo "🚀 Deploying to ${DEPLOY_DIR}"
+        echo "Building Docker image ${IMAGE_NAME}:${BRANCH_NAME}"
         sh '''
-          mkdir -p ${DEPLOY_DIR}
-          cp app ${DEPLOY_DIR}/
+          docker build -t ${IMAGE_NAME}:${BRANCH_NAME} .
         '''
       }
     }
 
-    stage('Run App') {
+    stage('Run container') {
       steps {
-        echo "🏃 Running app in background"
+        echo "Running Docker container for branch ${BRANCH_NAME}"
         sh '''
-          pkill -f "${DEPLOY_DIR}/app" || true
-          nohup ${DEPLOY_DIR}/app > ${DEPLOY_DIR}/output.log 2>&1 &
+          docker rm -f ${IMAGE_NAME}-${BRANCH_NAME} || true
+          docker run -d --name ${IMAGE_NAME}-${BRANCH_NAME} -p 3000:8080 ${IMAGE_NAME}:${BRANCH_NAME}
         '''
       }
     }
@@ -46,10 +45,7 @@ pipeline {
 
   post {
     success {
-      echo "✅ Deployed and running branch ${env.BRANCH_NAME} successfully at ${DEPLOY_DIR}"
-    }
-    failure {
-      echo "❌ Build or deploy failed for branch ${env.BRANCH_NAME}"
+      echo "Deployed ${IMAGE_NAME}:${BRANCH_NAME} successfully"
     }
   }
 }

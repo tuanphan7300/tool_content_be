@@ -46,3 +46,8 @@ func LoginHandler(c *gin.Context) {
 
 	c.JSON(200, gin.H{"token": tokenString})
 }
+
+func PingPongHandler(c *gin.Context) {
+	print("pong")
+	c.JSON(200, gin.H{"ping": "pong"})
+}

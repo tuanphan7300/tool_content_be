@@ -59,6 +59,9 @@ pipeline {
           # Generate Nginx config from template
           envsubst < nginx/template.conf > /tmp/nginx-${BRANCH_NAME}.conf
           
+          # Create conf.d directory if it doesn't exist
+          docker exec ${BRANCH_NAME}_nginx_1 mkdir -p /etc/nginx/conf.d
+          
           # Copy config to Nginx container
           docker cp /tmp/nginx-${BRANCH_NAME}.conf ${BRANCH_NAME}_nginx_1:/etc/nginx/conf.d/
           

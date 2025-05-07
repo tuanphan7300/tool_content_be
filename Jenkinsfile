@@ -45,26 +45,6 @@ pipeline {
           # Clean up existing containers
           docker-compose -p ${BRANCH_NAME} down -v --remove-orphans
           
-          # Generate Nginx config
-          cat > /tmp/nginx-${BRANCH_NAME}.conf << EOF
-server {
-    listen 80;
-    server_name ${SUBDOMAIN}.localtest.me;
-    
-    location / {
-        proxy_pass http://${APP_NAME}:${APP_PORT};
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-}
-EOF
-          
-          # Debug: Show generated config
-          echo "Generated Nginx config:"
-          cat /tmp/nginx-${BRANCH_NAME}.conf
-          
           # Start containers with all required environment variables
           SUBDOMAIN=${SUBDOMAIN} \
           APP_NAME=${APP_NAME} \
@@ -90,8 +70,21 @@ EOF
             sleep 2
           done
           
-          # Copy and apply Nginx config
-          docker cp /tmp/nginx-${BRANCH_NAME}.conf nginx-${BRANCH_NAME}:/etc/nginx/conf.d/default.conf
+          # Create Nginx config directly in the container
+          docker exec nginx-${BRANCH_NAME} sh -c 'cat > /etc/nginx/conf.d/default.conf << EOF
+server {
+    listen 80;
+    server_name ${SUBDOMAIN}.localtest.me;
+    
+    location / {
+        proxy_pass http://${APP_NAME}:${APP_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF'
           
           # Debug: Show config in container
           echo "Nginx config in container:"

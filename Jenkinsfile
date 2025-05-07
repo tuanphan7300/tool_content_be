@@ -43,8 +43,8 @@ pipeline {
       steps {
         echo "Running Docker containers for branch ${BRANCH_NAME}"
         sh '''
-          docker compose down || true
-          docker compose up -d
+          docker-compose down || true
+          docker-compose up -d
         '''
       }
     }

@@ -46,10 +46,20 @@ pipeline {
           docker-compose -p ${BRANCH_NAME} down -v --remove-orphans
           
           # Generate Nginx config
-          export SUBDOMAIN=${SUBDOMAIN}
-          export APP_NAME=${APP_NAME}
-          export APP_PORT=${APP_PORT}
-          envsubst "\$SUBDOMAIN \$APP_NAME \$APP_PORT" < nginx/template.conf > /tmp/nginx-${BRANCH_NAME}.conf
+          cat > /tmp/nginx-${BRANCH_NAME}.conf << EOF
+server {
+    listen 80;
+    server_name ${SUBDOMAIN}.localtest.me;
+    
+    location / {
+        proxy_pass http://${APP_NAME}:${APP_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
           
           # Debug: Show generated config
           echo "Generated Nginx config:"

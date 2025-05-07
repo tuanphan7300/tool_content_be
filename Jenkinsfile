@@ -45,13 +45,7 @@ pipeline {
           # Clean up existing containers
           docker-compose -p ${BRANCH_NAME} down -v --remove-orphans
           
-          # Start containers with all required environment variables
-          SUBDOMAIN=${SUBDOMAIN} \
-          APP_NAME=${APP_NAME} \
-          APP_PORT=${APP_PORT} \
-          MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD} \
-          MYSQL_DATABASE=${MYSQL_DATABASE} \
-          MYSQL_PORT=${MYSQL_PORT} \
+          # Start containers
           docker-compose -p ${BRANCH_NAME} up -d
           
           # Wait for nginx to be ready
@@ -69,28 +63,6 @@ pipeline {
             fi
             sleep 2
           done
-          
-          # Create Nginx config directly in the container
-          docker exec nginx-${BRANCH_NAME} sh -c 'cat > /etc/nginx/conf.d/default.conf << EOF
-server {
-    listen 80;
-    server_name ${SUBDOMAIN}.localtest.me;
-    
-    location / {
-        proxy_pass http://${APP_NAME}:${APP_PORT};
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-}
-EOF'
-          
-          # Debug: Show config in container
-          echo "Nginx config in container:"
-          docker exec nginx-${BRANCH_NAME} cat /etc/nginx/conf.d/default.conf
-          
-          docker exec nginx-${BRANCH_NAME} nginx -s reload
         '''
       }
     }

@@ -46,7 +46,10 @@ pipeline {
           docker-compose -p ${BRANCH_NAME} down -v --remove-orphans
           
           # Generate Nginx config
-          envsubst < nginx/template.conf > /tmp/nginx-${BRANCH_NAME}.conf
+          sed -e "s/\${SUBDOMAIN}/${SUBDOMAIN}/g" \
+              -e "s/\${APP_NAME}/${APP_NAME}/g" \
+              -e "s/\${APP_PORT}/${APP_PORT}/g" \
+              nginx/template.conf > /tmp/nginx-${BRANCH_NAME}.conf
           
           # Debug: Show generated config
           echo "Generated Nginx config:"

@@ -60,10 +60,10 @@ pipeline {
           envsubst < nginx/template.conf > /tmp/nginx-${BRANCH_NAME}.conf
           
           # Copy config to Nginx container
-          docker cp /tmp/nginx-${BRANCH_NAME}.conf nginx:/etc/nginx/conf.d/
+          docker cp /tmp/nginx-${BRANCH_NAME}.conf ${BRANCH_NAME}_nginx_1:/etc/nginx/conf.d/
           
           # Reload Nginx
-          docker exec nginx nginx -s reload
+          docker exec ${BRANCH_NAME}_nginx_1 nginx -s reload
         '''
       }
     }

@@ -48,6 +48,10 @@ pipeline {
           # Generate Nginx config
           envsubst < nginx/template.conf > /tmp/nginx-${BRANCH_NAME}.conf
           
+          # Debug: Show generated config
+          echo "Generated Nginx config:"
+          cat /tmp/nginx-${BRANCH_NAME}.conf
+          
           # Start containers with all required environment variables
           SUBDOMAIN=${SUBDOMAIN} \
           APP_NAME=${APP_NAME} \
@@ -75,6 +79,11 @@ pipeline {
           
           # Copy and apply Nginx config
           docker cp /tmp/nginx-${BRANCH_NAME}.conf nginx-${BRANCH_NAME}:/etc/nginx/conf.d/default.conf
+          
+          # Debug: Show config in container
+          echo "Nginx config in container:"
+          docker exec nginx-${BRANCH_NAME} cat /etc/nginx/conf.d/default.conf
+          
           docker exec nginx-${BRANCH_NAME} nginx -s reload
         '''
       }

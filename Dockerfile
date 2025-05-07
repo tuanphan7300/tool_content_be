@@ -16,11 +16,9 @@ FROM debian:bullseye-slim
 
 WORKDIR /app
 
-# Copy from build stage
-COPY --from=builder /app/app .
+COPY app /app/app
 
-# Expose port your app listens on
+# Mở cổng nếu app dùng HTTP
 EXPOSE 8080
 
-# Start the app
 CMD ["./app"]

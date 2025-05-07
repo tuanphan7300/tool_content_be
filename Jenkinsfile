@@ -1,39 +1,37 @@
 pipeline {
   agent any
+
   environment {
     IMAGE_NAME = "tool-content-be"
     DEPLOY_DIR = "/var/jenkins_home/deploy/${env.BRANCH_NAME}"
   }
+
   stages {
-    stage('Debug Workspace') {
-      steps {
-        sh 'pwd'
-        sh 'ls -la'
-        sh 'git rev-parse --resolve-git-dir .git || echo "Not a git directory"'
-      }
-    }
     stage('Checkout') {
       steps {
         checkout scm
       }
     }
+
     stage('Build binary') {
       steps {
-        echo "Building Go binary..."
+        echo "Building Go binary (linux/amd64)..."
         sh '''
-          go mod tidy
-          go build -o app
+          GOOS=linux GOARCH=amd64 go mod tidy
+          GOOS=linux GOARCH=amd64 go build -o app
         '''
       }
     }
+
     stage('Build Docker image') {
       steps {
-        echo "Building Docker image ${IMAGE_NAME}:${BRANCH_NAME}"
+        echo "Building Docker image ${IMAGE_NAME}:${BRANCH_NAME} (platform: linux/amd64)..."
         sh '''
-          docker build -t ${IMAGE_NAME}:${BRANCH_NAME} .
+          docker build --platform=linux/amd64 -t ${IMAGE_NAME}:${BRANCH_NAME} .
         '''
       }
     }
+
     stage('Run container') {
       steps {
         echo "Running Docker container for branch ${BRANCH_NAME}"
@@ -44,6 +42,7 @@ pipeline {
       }
     }
   }
+
   post {
     success {
       echo "Deployed ${IMAGE_NAME}:${BRANCH_NAME} successfully"

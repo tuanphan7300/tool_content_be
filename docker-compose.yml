@@ -26,7 +26,7 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE}
     volumes:
-      - mysql_data_${BRANCH_NAME}:/var/lib/mysql
+      - mysql_data:/var/lib/mysql
     networks:
       - backend
     healthcheck:
@@ -51,4 +51,4 @@ networks:
   backend:
 
 volumes:
-  mysql_data_${BRANCH_NAME}:
+  mysql_data:

@@ -2,7 +2,6 @@ package router
 
 import (
 	"creator-tool-backend/handler"
-	"creator-tool-backend/middleware"
 	"github.com/gin-gonic/gin"
 )
 
@@ -17,5 +16,5 @@ func SetupRoutes(r *gin.Engine) {
 	r.POST("/register", handler.RegisterHandler)
 	r.POST("/login", handler.LoginHandler)
 	r.POST("/ping", handler.PingPongHandler)
-	r.Use(middleware.AuthMiddleware())
+	//r.Use(middleware.AuthMiddleware())
 }

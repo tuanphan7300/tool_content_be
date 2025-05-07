@@ -19,6 +19,20 @@ func ConnectDatabase() {
 	configg := InfaConfig{}
 	configg.LoadConfig()
 
+	// Set default values if environment variables are not set
+	if configg.DB_HOST == "" {
+		configg.DB_HOST = "db" // Use service name from docker-compose
+	}
+	if configg.DB_PORT == "" {
+		configg.DB_PORT = "3306"
+	}
+	if configg.DB_USER == "" {
+		configg.DB_USER = "root"
+	}
+	if configg.DB_PASSWORD == "" {
+		configg.DB_PASSWORD = "root"
+	}
+
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/tool?charset=utf8mb4&parseTime=True&loc=Local",
 		configg.DB_USER,
 		configg.DB_PASSWORD,

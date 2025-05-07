@@ -4,6 +4,13 @@ pipeline {
   environment {
     IMAGE_NAME = "tool-content-be"
     DEPLOY_DIR = "/var/jenkins_home/deploy/${env.BRANCH_NAME}"
+    APP_NAME = "tool-content-be-${BRANCH_NAME}"
+    APP_PORT = "8080"
+    MYSQL_ROOT_PASSWORD = "root"
+    MYSQL_DATABASE = "tool"
+    MYSQL_USER = "root"
+    MYSQL_PASSWORD = "root"
+    MYSQL_PORT = "3306"
   }
 
   stages {
@@ -34,10 +41,10 @@ pipeline {
 
     stage('Run container') {
       steps {
-        echo "Running Docker container for branch ${BRANCH_NAME}"
+        echo "Running Docker containers for branch ${BRANCH_NAME}"
         sh '''
-          docker rm -f ${IMAGE_NAME}-${BRANCH_NAME} || true
-          docker run -d --name ${IMAGE_NAME}-${BRANCH_NAME} -p 3000:8080 ${IMAGE_NAME}:${BRANCH_NAME}
+          docker-compose down || true
+          docker-compose up -d
         '''
       }
     }

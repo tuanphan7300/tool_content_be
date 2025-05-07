@@ -48,6 +48,10 @@ pipeline {
           
           # Start containers with project name
           SUBDOMAIN=${SUBDOMAIN} docker-compose -p ${BRANCH_NAME} up -d
+          
+          # Wait for nginx container to be ready
+          echo "Waiting for nginx container to be ready..."
+          sleep 10
         '''
       }
     }

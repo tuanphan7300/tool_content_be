@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func ProcessVideoToAudio(videoPath string) (string, error) {
@@ -18,12 +19,27 @@ func ProcessVideoToAudio(videoPath string) (string, error) {
 		return "", fmt.Errorf("failed to create output directory: %v", err)
 	}
 
-	// Generate output filename
+	// Generate output filename (unique)
 	baseName := filepath.Base(videoPath)
 	fileNameWithoutExt := strings.TrimSuffix(baseName, filepath.Ext(baseName))
-	outputPath := filepath.Join(outputDir, fileNameWithoutExt+".mp3")
+	// Thêm timestamp vào tên file audio để đảm bảo duy nhất
+	timestamp := time.Now().UnixNano()
+	outputPath := filepath.Join(outputDir, fmt.Sprintf("%d_%s.mp3", timestamp, fileNameWithoutExt))
 
 	log.Printf("Will save audio to: %s", outputPath)
+
+	// Get video duration using ffprobe
+	durationCmd := exec.Command("ffprobe",
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		videoPath)
+	durationOutput, err := durationCmd.Output()
+	if err != nil {
+		log.Printf("Error getting video duration: %v", err)
+	} else {
+		log.Printf("Video duration: %s seconds", string(durationOutput))
+	}
 
 	// Use FFmpeg to extract audio
 	cmd := exec.Command("ffmpeg",
@@ -31,6 +47,7 @@ func ProcessVideoToAudio(videoPath string) (string, error) {
 		"-vn",                   // No video
 		"-acodec", "libmp3lame", // Use MP3 codec
 		"-q:a", "2", // High quality audio
+		"-y",       // Overwrite output file if exists
 		outputPath, // Output file
 	)
 
@@ -41,12 +58,25 @@ func ProcessVideoToAudio(videoPath string) (string, error) {
 		return "", fmt.Errorf("failed to process video: %v", err)
 	}
 
+	// Get audio duration using ffprobe
+	audioDurationCmd := exec.Command("ffprobe",
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		outputPath)
+	audioDurationOutput, err := audioDurationCmd.Output()
+	if err != nil {
+		log.Printf("Error getting audio duration: %v", err)
+	} else {
+		log.Printf("Audio duration: %s seconds", string(audioDurationOutput))
+	}
+
 	log.Printf("Audio extracted successfully")
 	return outputPath, nil
 }
 
 func separateAudio(audioPath string, fileName string, stemType string) (string, error) {
-	log.Printf("Starting to separate %s from: %s", stemType, audioPath)
+	log.Printf("Starting to separate %s from: %s", audioPath, stemType)
 
 	// Create output directory for separated audio
 	outputDir := "./storage/separated"
@@ -55,12 +85,27 @@ func separateAudio(audioPath string, fileName string, stemType string) (string, 
 	}
 
 	fileNameWithoutExt := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+	// Đảm bảo tên file separated là duy nhất (thêm timestamp)
+	timestamp := time.Now().UnixNano()
+	uniquePrefix := fmt.Sprintf("%d_%s", timestamp, fileNameWithoutExt)
 
-	// Use Spleeter to separate audio
-	spleeterPath := "/Users/phantuan/Library/Python/3.9/bin/spleeter"
-	cmd := exec.Command(spleeterPath,
-		"separate",
-		"-p", "spleeter:2stems", // Separate into vocals and accompaniment
+	// Get audio duration using ffprobe
+	durationCmd := exec.Command("ffprobe",
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		audioPath)
+	durationOutput, err := durationCmd.Output()
+	if err != nil {
+		log.Printf("Error getting audio duration: %v", err)
+	} else {
+		log.Printf("Input audio duration: %s seconds", string(durationOutput))
+	}
+
+	// Use Demucs to separate audio
+	cmd := exec.Command("/Users/phantuan/Library/Python/3.9/bin/demucs",
+		"-n", "htdemucs",
+		"--two-stems", "vocals",
 		"-o", outputDir,
 		audioPath,
 	)
@@ -68,22 +113,29 @@ func separateAudio(audioPath string, fileName string, stemType string) (string, 
 	// Capture command output
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Printf("Spleeter error output: %s", string(output))
-		return "", fmt.Errorf("failed to run spleeter: %v", err)
+		log.Printf("Demucs error output: %s", string(output))
+		return "", fmt.Errorf("failed to run demucs: %v", err)
 	}
 
-	log.Printf("Spleeter output: %s", string(output))
+	log.Printf("Demucs output: %s", string(output))
 
-	// Get the appropriate stem file
-	stemPath := filepath.Join(outputDir, fileNameWithoutExt, stemType+".wav")
+	// Get the appropriate stem file (Demucs output)
+	htdemucsDir := filepath.Join(outputDir, "htdemucs")
+	subDirs, err := os.ReadDir(htdemucsDir)
+	if err != nil || len(subDirs) == 0 {
+		return "", fmt.Errorf("Demucs output folder not found: %v", err)
+	}
+	actualSubDir := subDirs[0].Name()
+	stemPath := filepath.Join(htdemucsDir, actualSubDir, stemType+".wav")
 	log.Printf("%s extracted to: %s", stemType, stemPath)
 
 	// Convert WAV to MP3 for better compatibility
-	mp3Path := filepath.Join(outputDir, fileNameWithoutExt+"_"+stemType+".mp3")
+	mp3Path := filepath.Join(outputDir, uniquePrefix+"_"+stemType+".mp3")
 	ffmpegCmd := exec.Command("ffmpeg",
 		"-i", stemPath,
 		"-codec:a", "libmp3lame",
 		"-qscale:a", "2",
+		"-y", // Overwrite output file if exists
 		mp3Path,
 	)
 
@@ -92,6 +144,19 @@ func separateAudio(audioPath string, fileName string, stemType string) (string, 
 	if err != nil {
 		log.Printf("FFmpeg conversion error output: %s", string(ffmpegOutput))
 		return "", fmt.Errorf("failed to convert %s to MP3: %v", stemType, err)
+	}
+
+	// Get output audio duration using ffprobe
+	outputDurationCmd := exec.Command("ffprobe",
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		mp3Path)
+	outputDurationOutput, err := outputDurationCmd.Output()
+	if err != nil {
+		log.Printf("Error getting output audio duration: %v", err)
+	} else {
+		log.Printf("Output %s duration: %s seconds", stemType, string(outputDurationOutput))
 	}
 
 	log.Printf("%s converted to MP3: %s", stemType, mp3Path)
@@ -103,9 +168,52 @@ func separateAudio(audioPath string, fileName string, stemType string) (string, 
 }
 
 func ExtractBackgroundMusic(audioPath string, fileName string) (string, error) {
-	return separateAudio(audioPath, fileName, "accompaniment")
+	return separateAudio(audioPath, fileName, "no_vocals")
 }
 
 func ExtractVocals(audioPath string, fileName string) (string, error) {
 	return separateAudio(audioPath, fileName, "vocals")
+}
+
+// MergeVideoWithAudio merges a video with background music and TTS audio
+func MergeVideoWithAudio(videoPath, backgroundMusicPath, ttsPath string) (string, error) {
+	// Create output directory if it doesn't exist
+	outputDir := "storage/merged"
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create output directory: %v", err)
+	}
+
+	// Generate output filename with timestamp
+	timestamp := time.Now().Format("20060102_150405")
+	outputPath := filepath.Join(outputDir, fmt.Sprintf("merged_%s.mp4", timestamp))
+
+	// Create a complex filter to:
+	// 1. Tăng background music volume lên 1.2x
+	// 2. Giảm TTS volume còn 0.66x
+	// 3. Mix the audio streams
+	filterComplex := fmt.Sprintf(
+		"[1:a]volume=1.2[bg];[2:a]volume=0.66[tts];[bg][tts]amix=inputs=2:duration=longest[audio]",
+	)
+
+	// Merge video with adjusted audio
+	cmd := exec.Command("ffmpeg",
+		"-i", videoPath, // Input video
+		"-i", backgroundMusicPath, // Background music
+		"-i", ttsPath, // TTS audio
+		"-filter_complex", filterComplex, // Apply audio filters
+		"-map", "0:v", // Map video stream
+		"-map", "[audio]", // Map mixed audio
+		"-c:v", "copy", // Copy video codec
+		"-c:a", "aac", // Use AAC for audio
+		"-b:a", "192k", // Set audio bitrate
+		"-shortest", // End when shortest input ends
+		"-y",        // Overwrite output file
+		outputPath,
+	)
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to merge video with audio: %v", err)
+	}
+
+	return outputPath, nil
 }

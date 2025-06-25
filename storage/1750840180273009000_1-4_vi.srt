@@ -1,0 +1,204 @@
+1
+00:00:00,000 --> 00:00:01,500
+Ba tên trộm đang lên kế hoạch vượt sông.
+
+2
+00:00:01,500 --> 00:00:03,500
+Tên trộm A có 1000 đồng tiền vàng trong túi.
+
+3
+00:00:03,500 --> 00:00:05,500
+Tên trộm B có 700 đồng tiền vàng trong túi.
+
+4
+00:00:05,500 --> 00:00:08,000
+Còn tên trộm C chỉ có 300 đồng tiền vàng.
+
+5
+00:00:08,000 --> 00:00:10,500
+Phương tiện duy nhất để qua sông là một chiếc thuyền.
+
+6
+00:00:10,500 --> 00:00:13,000
+Chiếc thuyền này chỉ chở được tối đa hai vật thể cùng lúc.
+
+7
+00:00:13,000 --> 00:00:13,500
+Lưu ý!
+
+8
+00:00:13,500 --> 00:00:16,500
+Mỗi người và mỗi túi tiền vàng đều được tính là một vật thể.
+
+9
+00:00:16,500 --> 00:00:18,000
+Không liên quan đến kích thước và trọng lượng.
+
+10
+00:00:18,000 --> 00:00:18,500
+Nói cách khác,
+
+11
+00:00:18,500 --> 00:00:19,500
+Họ muốn qua sông
+
+12
+00:00:19,500 --> 00:00:20,500
+Thì chỉ có thể hai người cùng lên thuyền,
+
+13
+00:00:20,500 --> 00:00:23,000
+Hoặc một người mang theo một túi tiền vàng.
+
+14
+00:00:23,000 --> 00:00:25,000
+Và còn một vấn đề không thể bỏ qua, đó là:
+
+15
+00:00:25,000 --> 00:00:26,000
+Trong quá trình vượt sông,
+
+16
+00:00:26,000 --> 00:00:28,000
+Nếu chỉ còn lại một tên trộm ở bờ sông,
+
+17
+00:00:31,000 --> 00:00:33,500
+Hắn ta sẽ lập tức bỏ trốn cùng số tiền vàng.
+
+18
+00:00:33,500 --> 00:00:36,000
+Quy tắc tương tự cũng áp dụng cho trường hợp hai người.
+
+19
+00:00:36,000 --> 00:00:38,000
+Nếu số tiền vàng của hai người cộng lại vượt quá
+
+20
+00:00:38,000 --> 00:00:40,000
+Tổng số tiền vàng ban đầu của họ,
+
+21
+00:00:40,000 --> 00:00:42,000
+Hai người đó cũng sẽ bỏ trốn cùng số tiền.
+
+22
+00:00:42,000 --> 00:00:43,500
+Vì vậy, trước khi vượt sông,
+
+23
+00:00:43,500 --> 00:00:44,500
+Họ phải lập kế hoạch kỹ lưỡng,
+
+24
+00:00:44,500 --> 00:00:47,000
+Để đảm bảo số tiền vàng của mình được an toàn tuyệt đối.
+
+25
+00:00:47,000 --> 00:00:48,500
+Vậy họ nên làm thế nào?
+
+26
+00:00:53,000 --> 00:00:54,000
+Chìa khóa của vấn đề nằm ở chỗ,
+
+27
+00:00:54,000 --> 00:00:57,000
+Phải tìm mọi cách để tránh trường hợp trộm cắp bỏ trốn.
+
+28
+00:00:57,000 --> 00:00:59,500
+Đầu tiên, tên trộm B mang theo tiền của mình qua sông.
+
+29
+00:00:59,500 --> 00:01:02,000
+Đến bờ bên kia, để tiền lại rồi quay lại.
+
+30
+00:01:02,000 --> 00:01:05,000
+Sau đó, tên trộm A mang 300 đồng tiền vàng qua sông.
+
+31
+00:01:05,000 --> 00:01:07,500
+Đến bờ bên kia, để tiền lại rồi quay lại.
+
+32
+00:01:07,500 --> 00:01:10,500
+Bây giờ, ở bờ bên kia đã có tiền của B và C.
+
+33
+00:01:10,500 --> 00:01:12,500
+Vì vậy, B và C cùng nhau qua sông.
+
+34
+00:01:12,500 --> 00:01:14,000
+Đến bờ bên kia, B ở lại,
+
+35
+00:01:14,000 --> 00:01:17,000
+C mang theo 300 đồng tiền vàng của mình quay lại.
+
+36
+00:01:17,000 --> 00:01:20,500
+Tiếp theo, tên trộm A mang 1000 đồng tiền vàng của mình qua sông.
+
+37
+00:01:20,500 --> 00:01:21,000
+Sau khi lên bờ,
+
+38
+00:01:21,000 --> 00:01:24,000
+Cho tên trộm B mang 700 đồng tiền vàng của mình quay lại.
+
+39
+00:01:24,000 --> 00:01:26,000
+Rồi để lại 700 đồng tiền vàng đó,
+
+40
+00:01:26,000 --> 00:01:28,500
+Tên trộm C lên thuyền cùng tên trộm B qua sông.
+
+41
+00:01:28,500 --> 00:01:30,500
+Đến bờ bên kia, cả hai ở lại,
+
+42
+00:01:30,500 --> 00:01:32,500
+Tên trộm A quay lại một mình.
+
+43
+00:01:32,500 --> 00:01:34,500
+Rồi mang 300 đồng tiền vàng qua sông.
+
+44
+00:01:34,500 --> 00:01:37,500
+Giờ chỉ còn lại 700 đồng tiền vàng của tên trộm B ở bờ bên kia.
+
+45
+00:01:37,500 --> 00:01:39,500
+Vì vậy, chỉ cần tên trộm B quay lại,
+
+46
+00:01:39,500 --> 00:01:41,500
+Mang theo 700 đồng tiền vàng của mình qua sông,
+
+47
+00:01:41,500 --> 00:01:43,500
+Là kế hoạch đã hoàn thành.
+
+48
+00:01:43,500 --> 00:01:44,500
+Tên trộm không đáng sợ,
+
+49
+00:01:44,500 --> 00:01:45,500
+Chỉ sợ có học thức.
+
+50
+00:01:45,500 --> 00:01:47,000
+Ngay cả khi ba tên trộm vượt sông thành công,
+
+51
+00:01:47,000 --> 00:01:49,500
+Cuối cùng chúng cũng sẽ phải nhận lấy hình phạt thích đáng.
+

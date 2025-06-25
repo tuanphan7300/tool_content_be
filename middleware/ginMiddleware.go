@@ -1,9 +1,11 @@
 package middleware
 
 import (
+	"creator-tool-backend/config"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"strings"
 )
 
 func AuthMiddleware() gin.HandlerFunc {
@@ -16,18 +18,33 @@ func AuthMiddleware() gin.HandlerFunc {
 
 		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
 
-		token, _ := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok { // Ensure token uses HMAC / トークンがHMACを使用していることを確認
-				return nil, nil
+		// Load JWT secret key from config
+		conf := config.InfaConfig{}
+		conf.LoadConfig()
+
+		token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, jwt.ErrSignatureInvalid
 			}
-			return []byte(tokenStr), nil
+			return []byte(conf.JWTACCESSKEY), nil
 		})
 
+		if err != nil {
+			c.AbortWithStatusJSON(401, gin.H{"error": "invalid token: " + err.Error()})
+			return
+		}
+
 		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-			c.Set("user_id", claims["user_id"])
-			c.Next()
+			// Convert user_id to float64 first (since JWT numbers are stored as float64)
+			if userID, ok := claims["user_id"].(float64); ok {
+				// Convert to uint and set in context
+				c.Set("user_id", uint(userID))
+				c.Next()
+			} else {
+				c.AbortWithStatusJSON(401, gin.H{"error": "invalid user_id in token"})
+			}
 		} else {
-			c.AbortWithStatusJSON(401, gin.H{"error": "invalid token"})
+			c.AbortWithStatusJSON(401, gin.H{"error": "invalid token claims"})
 		}
 	}
 }

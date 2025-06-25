@@ -2,14 +2,16 @@ package util
 
 import (
 	"fmt"
-	"github.com/gin-gonic/gin"
-	log "github.com/sirupsen/logrus"
 	"mime/multipart"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	log "github.com/sirupsen/logrus"
 )
 
 func Processfile(c *gin.Context, file *multipart.FileHeader) (video, audio, fileVideoPath string, audioPath string, err error) {
@@ -61,4 +63,19 @@ func isValidFile(filename string, size int64) bool {
 		return false
 	}
 	return true
+}
+
+// GetAudioDuration trả về duration (giây) của file audio/video
+func GetAudioDuration(filePath string) (float64, error) {
+	cmd := exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filePath)
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, err
+	}
+	durStr := strings.TrimSpace(string(output))
+	dur, err := strconv.ParseFloat(durStr, 64)
+	if err != nil {
+		return 0, err
+	}
+	return dur, nil
 }

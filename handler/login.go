@@ -44,7 +44,10 @@ func LoginHandler(c *gin.Context) {
 		return
 	}
 
-	c.JSON(200, gin.H{"token": tokenString})
+	c.JSON(200, gin.H{
+		"user_info": user,
+		"token":     tokenString,
+	})
 }
 
 func PingPongHandler(c *gin.Context) {

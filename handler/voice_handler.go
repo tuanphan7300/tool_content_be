@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -23,12 +25,20 @@ func ProcessVoiceHandler(c *gin.Context) {
 
 	log.Printf("Received video file: %s, size: %d bytes", file.Filename, file.Size)
 
-	// Create a temporary file path
-	tempDir := "./storage/temp"
-	filename := filepath.Join(tempDir, file.Filename)
+	// Tạo thư mục riêng cho video
+	videoBase := strings.TrimSuffix(file.Filename, filepath.Ext(file.Filename))
+	videoDir := filepath.Join("./storage", videoBase)
+	if err := os.MkdirAll(videoDir, 0755); err != nil {
+		log.Printf("Error creating video directory: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to create video directory",
+		})
+		return
+	}
 
 	// Save the uploaded file
-	if err := c.SaveUploadedFile(file, filename); err != nil {
+	videoPath := filepath.Join(videoDir, file.Filename)
+	if err := c.SaveUploadedFile(file, videoPath); err != nil {
 		log.Printf("Error saving video file: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to save video file",
@@ -36,10 +46,10 @@ func ProcessVoiceHandler(c *gin.Context) {
 		return
 	}
 
-	log.Printf("Video file saved to: %s", filename)
+	log.Printf("Video file saved to: %s", videoPath)
 
 	// Process the video to extract audio
-	audioPath, err := service.ProcessVideoToAudio(filename)
+	audioPath, err := service.ProcessVideoToAudio(videoPath, videoDir)
 	if err != nil {
 		log.Printf("Error processing video: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -49,7 +59,7 @@ func ProcessVoiceHandler(c *gin.Context) {
 	}
 
 	// Extract vocals
-	vocalsPath, err := service.ExtractVocals(audioPath, file.Filename)
+	vocalsPath, err := service.ExtractVocals(audioPath, file.Filename, videoDir)
 	if err != nil {
 		log.Printf("Error extracting vocals: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -77,12 +87,20 @@ func ProcessBackgroundMusicHandler(c *gin.Context) {
 
 	log.Printf("Received video file: %s, size: %d bytes", file.Filename, file.Size)
 
-	// Create a temporary file path
-	tempDir := "./storage/temp"
-	filename := filepath.Join(tempDir, file.Filename)
+	// Tạo thư mục riêng cho video
+	videoBase := strings.TrimSuffix(file.Filename, filepath.Ext(file.Filename))
+	videoDir := filepath.Join("./storage", videoBase)
+	if err := os.MkdirAll(videoDir, 0755); err != nil {
+		log.Printf("Error creating video directory: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to create video directory",
+		})
+		return
+	}
 
 	// Save the uploaded file
-	if err := c.SaveUploadedFile(file, filename); err != nil {
+	videoPath := filepath.Join(videoDir, file.Filename)
+	if err := c.SaveUploadedFile(file, videoPath); err != nil {
 		log.Printf("Error saving video file: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to save video file",
@@ -90,10 +108,10 @@ func ProcessBackgroundMusicHandler(c *gin.Context) {
 		return
 	}
 
-	log.Printf("Video file saved to: %s", filename)
+	log.Printf("Video file saved to: %s", videoPath)
 
 	// Process the video to extract audio
-	audioPath, err := service.ProcessVideoToAudio(filename)
+	audioPath, err := service.ProcessVideoToAudio(videoPath, videoDir)
 	if err != nil {
 		log.Printf("Error processing video: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -103,7 +121,7 @@ func ProcessBackgroundMusicHandler(c *gin.Context) {
 	}
 
 	// Extract background music
-	backgroundPath, err := service.ExtractBackgroundMusic(audioPath, file.Filename)
+	backgroundPath, err := service.ExtractBackgroundMusic(audioPath, file.Filename, videoDir)
 	if err != nil {
 		log.Printf("Error extracting background music: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{

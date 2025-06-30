@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -106,7 +107,7 @@ func ProcessHandler(c *gin.Context) {
 	}
 
 	// Convert translated SRT to speech
-	ttsPath, err := service.ConvertSRTToSpeech(srtContent)
+	ttsPath, err := service.ConvertSRTToSpeech(srtContent, "./storage", 1.2)
 	if err != nil {
 		log.Printf("Error converting SRT to speech: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -182,11 +183,20 @@ func ProcessVideoHandler(c *gin.Context) {
 	timestamp := time.Now().UnixNano()
 	baseName := strings.TrimSuffix(filepath.Base(file.Filename), filepath.Ext(file.Filename))
 	uniqueName := fmt.Sprintf("%d_%s%s", timestamp, baseName, filepath.Ext(file.Filename))
-	tempDir := "./storage/temp"
-	filename := filepath.Join(tempDir, uniqueName)
 
-	// Save the uploaded file
-	if err := c.SaveUploadedFile(file, filename); err != nil {
+	// Tạo thư mục riêng cho video
+	videoDir := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName)))
+	if err := os.MkdirAll(videoDir, 0755); err != nil {
+		log.Printf("Error creating video directory: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to create video directory",
+		})
+		return
+	}
+
+	// Lưu video vào thư mục riêng
+	videoPath := filepath.Join(videoDir, uniqueName)
+	if err := c.SaveUploadedFile(file, videoPath); err != nil {
 		log.Printf("Error saving video file: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to save video file",
@@ -194,15 +204,13 @@ func ProcessVideoHandler(c *gin.Context) {
 		return
 	}
 
-	log.Printf("Video file saved to: %s", filename)
+	log.Printf("Video file saved to: %s", videoPath)
 
-	// Process the video to extract audio
-	audioPath, err := service.ProcessVideoToAudio(filename)
+	// Tách audio từ video
+	audioPath, err := util.ProcessfileToDir(c, file, videoDir)
 	if err != nil {
-		log.Printf("Error processing video: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to process video: %v", err),
-		})
+		log.Printf("Error processing file: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process file"})
 		return
 	}
 
@@ -218,7 +226,7 @@ func ProcessVideoHandler(c *gin.Context) {
 	}
 
 	// Extract background music
-	backgroundPath, err := service.ExtractBackgroundMusic(audioPath, uniqueName)
+	backgroundPath, err := service.ExtractBackgroundMusic(audioPath, uniqueName, videoDir)
 	if err != nil {
 		log.Printf("Error extracting background music: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -228,7 +236,7 @@ func ProcessVideoHandler(c *gin.Context) {
 	}
 
 	// Extract vocals
-	vocalsPath, err := service.ExtractVocals(audioPath, uniqueName)
+	vocalsPath, err := service.ExtractVocals(audioPath, uniqueName, videoDir)
 	if err != nil {
 		log.Printf("Error extracting vocals: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -249,7 +257,7 @@ func ProcessVideoHandler(c *gin.Context) {
 
 	// Create original SRT file from segments
 	originalSrtContent := createSRT(segments)
-	originalSrtPath := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName))+"_or.srt")
+	originalSrtPath := filepath.Join(videoDir, strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName))+"_or.srt")
 	if err := os.WriteFile(originalSrtPath, []byte(originalSrtContent), 0644); err != nil {
 		log.Printf("Error creating original SRT file: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -285,13 +293,33 @@ func ProcessVideoHandler(c *gin.Context) {
 
 	// Create SRT file from translated segments
 	srtContent := createSRT(translatedSegments)
-	srtPath := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName))+"_vi.srt")
+	srtPath := filepath.Join(videoDir, strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName))+"_vi.srt")
 	if err := os.WriteFile(srtPath, []byte(srtContent), 0644); err != nil {
 		log.Printf("Error creating SRT file: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": fmt.Sprintf("Failed to create SRT file: %v", err),
 		})
 		return
+	}
+
+	// Lấy các tham số tuỳ chỉnh từ form-data
+	backgroundVolume := 1.2
+	ttsVolume := 0.66
+	speakingRate := 1.2
+	if v := c.PostForm("background_volume"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			backgroundVolume = f
+		}
+	}
+	if v := c.PostForm("tts_volume"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			ttsVolume = f
+		}
+	}
+	if v := c.PostForm("speaking_rate"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			speakingRate = f
+		}
 	}
 
 	// Trừ token cho Google TTS (ước tính: 1 token/62.5 ký tự, dùng tổng ký tự của srtContent)
@@ -306,7 +334,7 @@ func ProcessVideoHandler(c *gin.Context) {
 	}
 
 	// Convert translated SRT to speech
-	ttsPath, err := service.ConvertSRTToSpeech(srtContent)
+	ttsPath, err := service.ConvertSRTToSpeech(srtContent, videoDir, speakingRate)
 	if err != nil {
 		log.Printf("Error converting SRT to speech: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -316,7 +344,7 @@ func ProcessVideoHandler(c *gin.Context) {
 	}
 
 	// Merge video with background music and TTS audio
-	mergedVideoPath, err := service.MergeVideoWithAudio(filename, backgroundPath, ttsPath)
+	mergedVideoPath, err := service.MergeVideoWithAudio(videoPath, backgroundPath, ttsPath, videoDir, backgroundVolume, ttsVolume)
 	if err != nil {
 		log.Printf("Error merging video with audio: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{

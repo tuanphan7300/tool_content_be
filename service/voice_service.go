@@ -10,11 +10,11 @@ import (
 	"time"
 )
 
-func ProcessVideoToAudio(videoPath string) (string, error) {
+func ProcessVideoToAudio(videoPath string, videoDir string) (string, error) {
 	log.Printf("Starting to process video: %s", videoPath)
 
 	// Create output directory if it doesn't exist
-	outputDir := "./storage/audio"
+	outputDir := filepath.Join(videoDir, "audio")
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create output directory: %v", err)
 	}
@@ -75,11 +75,11 @@ func ProcessVideoToAudio(videoPath string) (string, error) {
 	return outputPath, nil
 }
 
-func separateAudio(audioPath string, fileName string, stemType string) (string, error) {
+func separateAudio(audioPath string, fileName string, stemType string, videoDir string) (string, error) {
 	log.Printf("Starting to separate %s from: %s", audioPath, stemType)
 
 	// Create output directory for separated audio
-	outputDir := "./storage/separated"
+	outputDir := filepath.Join(videoDir, "separated")
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create separated audio directory: %v", err)
 	}
@@ -167,18 +167,18 @@ func separateAudio(audioPath string, fileName string, stemType string) (string, 
 	return mp3Path, nil
 }
 
-func ExtractBackgroundMusic(audioPath string, fileName string) (string, error) {
-	return separateAudio(audioPath, fileName, "no_vocals")
+func ExtractBackgroundMusic(audioPath string, fileName string, videoDir string) (string, error) {
+	return separateAudio(audioPath, fileName, "no_vocals", videoDir)
 }
 
-func ExtractVocals(audioPath string, fileName string) (string, error) {
-	return separateAudio(audioPath, fileName, "vocals")
+func ExtractVocals(audioPath string, fileName string, videoDir string) (string, error) {
+	return separateAudio(audioPath, fileName, "vocals", videoDir)
 }
 
 // MergeVideoWithAudio merges a video with background music and TTS audio
-func MergeVideoWithAudio(videoPath, backgroundMusicPath, ttsPath string) (string, error) {
+func MergeVideoWithAudio(videoPath, backgroundMusicPath, ttsPath, videoDir string, backgroundVolume, ttsVolume float64) (string, error) {
 	// Create output directory if it doesn't exist
-	outputDir := "storage/merged"
+	outputDir := filepath.Join(videoDir, "merged")
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create output directory: %v", err)
 	}
@@ -187,12 +187,10 @@ func MergeVideoWithAudio(videoPath, backgroundMusicPath, ttsPath string) (string
 	timestamp := time.Now().Format("20060102_150405")
 	outputPath := filepath.Join(outputDir, fmt.Sprintf("merged_%s.mp4", timestamp))
 
-	// Create a complex filter to:
-	// 1. Tăng background music volume lên 1.2x
-	// 2. Giảm TTS volume còn 0.66x
-	// 3. Mix the audio streams
+	// Create a complex filter để mix audio với volume tuỳ chỉnh
 	filterComplex := fmt.Sprintf(
-		"[1:a]volume=1.2[bg];[2:a]volume=0.66[tts];[bg][tts]amix=inputs=2:duration=longest[audio]",
+		"[1:a]volume=%.2f[bg];[2:a]volume=%.2f[tts];[bg][tts]amix=inputs=2:duration=longest[audio]",
+		backgroundVolume, ttsVolume,
 	)
 
 	// Merge video with adjusted audio

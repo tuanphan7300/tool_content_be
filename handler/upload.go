@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"creator-tool-backend/limit"
+
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )
@@ -41,22 +42,21 @@ func UploadHandler(c *gin.Context) {
 		return
 	}
 
-	// Tạo folder storage
-	err = os.MkdirAll("storage", os.ModePerm)
-	if err != nil {
-		log.WithError(err).Error("Could not create storage folder")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create storage folder"})
+	// Tạo thư mục riêng cho video
+	videoBase := strings.TrimSuffix(file.Filename, filepath.Ext(file.Filename))
+	videoDir := filepath.Join("storage", videoBase)
+	if err := os.MkdirAll(videoDir, os.ModePerm); err != nil {
+		log.WithError(err).Error("Could not create videoDir folder")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create videoDir folder"})
 		return
 	}
-
 	// Tạo tên file an toàn
 	filename := fmt.Sprintf("%d_%s", time.Now().Unix(), filepath.Base(file.Filename))
 	filename = strings.ReplaceAll(filename, " ", "_")
 	if len(filename) > 20 {
 		filename = filename[:20]
 	}
-	filePath := filepath.Join("storage", filename)
-
+	filePath := filepath.Join(videoDir, filename)
 	// Lưu file
 	if err := c.SaveUploadedFile(file, filePath); err != nil {
 		log.WithError(err).Error("Failed to save file")
@@ -65,8 +65,7 @@ func UploadHandler(c *gin.Context) {
 	}
 	// Tách file audio từ video
 	audioFilename := strings.TrimSuffix(filename, filepath.Ext(filename)) + ".mp3"
-	audioPath := filepath.Join("storage", audioFilename)
-
+	audioPath := filepath.Join(videoDir, audioFilename)
 	cmd := exec.Command("ffmpeg", "-i", filePath, "-q:a", "0", "-map", "a", audioPath)
 	err = cmd.Run()
 	if err != nil {
@@ -74,7 +73,6 @@ func UploadHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract audio"})
 		return
 	}
-
 	log.Info("File uploaded and audio extracted successfully")
 	c.JSON(http.StatusOK, gin.H{
 		"message":       "File uploaded and audio extracted successfully",

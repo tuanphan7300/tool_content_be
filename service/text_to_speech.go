@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -169,7 +168,7 @@ func parseSRTTime(timeStr string) (float64, error) {
 }
 
 // ConvertSRTToSpeech converts SRT content to speech and returns the audio file path
-func ConvertSRTToSpeech(srtContent string) (string, error) {
+func ConvertSRTToSpeech(srtContent string, videoDir string, speakingRate float64) (string, error) {
 	// Parse SRT content
 	entries, err := parseSRT(srtContent)
 	if err != nil {
@@ -177,7 +176,7 @@ func ConvertSRTToSpeech(srtContent string) (string, error) {
 	}
 
 	// Create output directory if it doesn't exist
-	outputDir := "storage/tts"
+	outputDir := filepath.Join(videoDir, "tts")
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create output directory: %v", err)
 	}
@@ -203,8 +202,6 @@ func ConvertSRTToSpeech(srtContent string) (string, error) {
 
 	// Process each segment
 	var segmentFiles []string
-	speakingRate := 1.2     // Giữ tốc độ đọc cố định ở 1.2x
-	var currentTime float64 // Theo dõi thời gian hiện tại
 
 	for i, entry := range entries {
 		// Convert text to speech first
@@ -214,7 +211,7 @@ func ConvertSRTToSpeech(srtContent string) (string, error) {
 			},
 			Voice: &texttospeechpb.VoiceSelectionParams{
 				LanguageCode: "vi-VN",
-				Name:         "vi-VN-Chirp3-HD-Sulafat",
+				Name:         "vi-VN-Wavenet-C",
 			},
 			AudioConfig: &texttospeechpb.AudioConfig{
 				AudioEncoding: texttospeechpb.AudioEncoding_MP3,
@@ -247,7 +244,8 @@ func ConvertSRTToSpeech(srtContent string) (string, error) {
 		expectedDuration := entry.End - entry.Start
 		adjustedSegmentFile := segmentFile
 
-		if actualDuration < expectedDuration-0.05 { // Nếu ngắn hơn, thêm silence cuối
+		// Nếu audio TTS ngắn hơn duration SRT, chèn silence vào cuối cho đủ
+		if actualDuration < expectedDuration-0.05 {
 			silenceFile := filepath.Join(tempDir, fmt.Sprintf("silence_end_%d.mp3", i))
 			silenceDuration := expectedDuration - actualDuration
 			cmd := exec.Command("ffmpeg", "-f", "lavfi", "-i", fmt.Sprintf("anullsrc=r=44100:cl=stereo:d=%f", silenceDuration), "-q:a", "0", "-map", "0:a", silenceFile)
@@ -265,7 +263,8 @@ func ConvertSRTToSpeech(srtContent string) (string, error) {
 			if err := cmd.Run(); err != nil {
 				return "", fmt.Errorf("failed to concat segment and silence: %v", err)
 			}
-		} else if actualDuration > expectedDuration+0.05 { // Nếu dài hơn, cắt bớt
+		} else if actualDuration > expectedDuration+0.05 {
+			// Nếu audio TTS dài hơn duration SRT, cắt bớt
 			trimmedFile := filepath.Join(tempDir, fmt.Sprintf("trimmed_segment_%d.mp3", i))
 			cmd := exec.Command("ffmpeg", "-i", segmentFile, "-t", fmt.Sprintf("%f", expectedDuration), "-c", "copy", trimmedFile)
 			if err := cmd.Run(); err != nil {
@@ -274,17 +273,18 @@ func ConvertSRTToSpeech(srtContent string) (string, error) {
 			adjustedSegmentFile = trimmedFile
 		}
 
-		// Calculate required silence to match SRT timing (giữ nguyên logic silenceBefore)
+		// Chèn silence trước nếu cần để bắt đầu đúng tại entry.Start
 		var silenceBefore float64
-		if i == 0 {
-			silenceBefore = entry.Start
-		} else {
-			prevEnd := entries[i-1].End
-			silenceBefore = entry.Start - prevEnd
-		}
-		expectedTime := entry.Start
-		if currentTime < expectedTime {
-			silenceBefore += expectedTime - currentTime
+		if entry.Start > 0 {
+			if i == 0 {
+				silenceBefore = entry.Start
+			} else {
+				prevEnd := entries[i-1].End
+				silenceBefore = entry.Start - prevEnd
+				if silenceBefore < 0 {
+					silenceBefore = 0
+				}
+			}
 		}
 		if silenceBefore > 0 {
 			silenceFile := filepath.Join(tempDir, fmt.Sprintf("silence_%d.mp3", i))
@@ -293,25 +293,8 @@ func ConvertSRTToSpeech(srtContent string) (string, error) {
 				return "", fmt.Errorf("failed to create silence: %v", err)
 			}
 			segmentFiles = append(segmentFiles, silenceFile)
-			currentTime += silenceBefore
 		}
 		segmentFiles = append(segmentFiles, adjustedSegmentFile)
-		currentTime += expectedDuration
-		log.Printf("Segment %d: Expected start=%.2f, Current time=%.2f, Duration=%.2f, Expected duration=%.2f", i+1, entry.Start, currentTime, actualDuration, expectedDuration)
-	}
-
-	// Add final silence if needed to match total duration
-	if len(entries) > 0 {
-		lastEntry := entries[len(entries)-1]
-		if currentTime < lastEntry.End {
-			finalSilence := lastEntry.End - currentTime
-			silenceFile := filepath.Join(tempDir, "final_silence.mp3")
-			cmd := exec.Command("ffmpeg", "-f", "lavfi", "-i", fmt.Sprintf("anullsrc=r=44100:cl=stereo:d=%f", finalSilence), "-q:a", "0", "-map", "0:a", silenceFile)
-			if err := cmd.Run(); err != nil {
-				return "", fmt.Errorf("failed to create final silence: %v", err)
-			}
-			segmentFiles = append(segmentFiles, silenceFile)
-		}
 	}
 
 	// Combine all segments

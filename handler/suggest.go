@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"creator-tool-backend/service"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -13,7 +14,7 @@ func SuggestHandler(c *gin.Context) {
 	filePath := filepath.Join("storage", id)
 
 	// Gọi lại Whisper để lấy transcript (bây giờ nhận về text + segments)
-	text, _, err := service.TranscribeWhisperOpenAI(filePath, openAIKey)
+	text, _, _, err := service.TranscribeWhisperOpenAI(filePath, openAIKey)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Whisper failed: " + err.Error()})
 		return

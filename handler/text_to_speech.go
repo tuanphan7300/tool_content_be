@@ -66,17 +66,7 @@ func TextToSpeechHandler(c *gin.Context) {
 		return
 	}
 
-	// Trừ token cho Google TTS
-	tokenPerChar := 1.0 / 62.5
-	tokens := int(float64(len(req.Text))*tokenPerChar + 0.9999) // làm tròn lên
-	if tokens < 1 {
-		tokens = 1
-	}
-	if err := DeductUserToken(userID, tokens, "tts", "Google TTS", nil); err != nil {
-		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ token cho TTS"})
-		return
-	}
-
+	// Lưu history trước để lấy video_id
 	history := config.CaptionHistory{
 		UserID:        userID,
 		Transcript:    req.Text,
@@ -87,6 +77,18 @@ func TextToSpeechHandler(c *gin.Context) {
 	if err := config.Db.Create(&history).Error; err != nil {
 		logrus.Errorf("Failed to save history: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save history"})
+		return
+	}
+
+	videoID := &history.ID
+	// Trừ token cho Google TTS
+	tokenPerChar := 1.0 / 62.5
+	tokens := int(float64(len(req.Text))*tokenPerChar + 0.9999) // làm tròn lên
+	if tokens < 1 {
+		tokens = 1
+	}
+	if err := DeductUserToken(userID, tokens, "tts", "Google TTS", videoID); err != nil {
+		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ token cho TTS"})
 		return
 	}
 

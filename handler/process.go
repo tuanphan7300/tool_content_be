@@ -49,21 +49,46 @@ func ProcessHandler(c *gin.Context) {
 
 	// Lưu file tạm
 	_, _, _, saveAudioPath, _ := util.Processfile(c, file)
-
-	// Tính duration file audio (Whisper)
-	duration, _ := util.GetAudioDuration(saveAudioPath) // trả về giây
-	whisperTokens := int(duration/60.0*6 + 0.5)         // Làm tròn lên
-	if whisperTokens < 6 {
-		whisperTokens = 6 // Tối thiểu 6 tokens
-	}
-	if err := DeductUserToken(userID, whisperTokens, "whisper", "Whisper transcribe", nil); err != nil {
-		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ token cho Whisper"})
+	// Kiểm tra duration < 10 phút
+	duration, _ := util.GetAudioDuration(saveAudioPath)
+	if duration > 600 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 10 phút."})
 		return
 	}
-	// Gọi Whisper để lấy transcript
-	transcript, segments, err := service.TranscribeWhisperOpenAI(saveAudioPath, apiKey)
+
+	// Gọi Whisper để lấy transcript và usage thực tế
+	transcript, segments, whisperUsage, err := service.TranscribeWhisperOpenAI(saveAudioPath, apiKey)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Whisper error"})
+		return
+	}
+	// Trừ token đúng usage thực tế
+	whisperTokens := 0
+	if whisperUsage != nil && whisperUsage.TotalTokens > 0 {
+		whisperTokens = whisperUsage.TotalTokens
+	} else {
+		duration, _ := util.GetAudioDuration(saveAudioPath)
+		whisperTokens = int(duration/60.0*6 + 0.5)
+		if whisperTokens < 6 {
+			whisperTokens = 6
+		}
+	}
+	// Lưu history trước để lấy video_id
+	jsonData, _ := json.Marshal(segments)
+	captionHistory := config.CaptionHistory{
+		UserID:        userID,
+		VideoFilename: file.Filename,
+		Transcript:    transcript,
+		Segments:      jsonData,
+		CreatedAt:     time.Now(),
+	}
+	if err := config.Db.Create(&captionHistory).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save history"})
+		return
+	}
+	videoID := &captionHistory.ID
+	if err := DeductUserToken(userID, whisperTokens, "whisper", "Whisper transcribe", videoID); err != nil {
+		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ token cho Whisper"})
 		return
 	}
 
@@ -73,74 +98,40 @@ func ProcessHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT error"})
 		return
 	}
-	jsonData, err := json.Marshal(segments)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT error"})
-		return
+	// Trừ token cho Gemini dịch (tính theo ký tự gửi lên)
+	jsonData, _ = json.Marshal(segments)
+	geminiTokens := int(float64(len(jsonData))/62.5 + 0.9999)
+	if geminiTokens < 1 {
+		geminiTokens = 1
 	}
-	// Trừ token cho Gemini dịch
-	geminiTokens := 3
-	if err := DeductUserToken(userID, geminiTokens, "gemini", "Gemini dịch caption", nil); err != nil {
+	if err := DeductUserToken(userID, geminiTokens, "gemini", "Gemini dịch caption", videoID); err != nil {
 		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ token cho Gemini"})
 		return
 	}
 	translatedSegments, err := service.TranslateSegmentsWithGemini(string(jsonData), geminiKey)
 	if err != nil {
-		fmt.Println("Error translating segments:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gemini error"})
 		return
 	}
-	jsonDataVi, err := json.Marshal(translatedSegments)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT error"})
-		return
-	}
-
+	jsonDataVi, _ := json.Marshal(translatedSegments)
 	// Create SRT file from translated segments
 	srtContent := createSRT(translatedSegments)
 	srtPath := filepath.Join("./storage", strings.TrimSuffix(file.Filename, filepath.Ext(file.Filename))+"_vi.srt")
-	if err := os.WriteFile(srtPath, []byte(srtContent), 0644); err != nil {
-		log.Printf("Error creating SRT file: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to create SRT file: %v", err),
-		})
-		return
-	}
-
+	_ = os.WriteFile(srtPath, []byte(srtContent), 0644)
 	// Convert translated SRT to speech
-	ttsPath, err := service.ConvertSRTToSpeech(srtContent, "./storage", 1.2)
-	if err != nil {
-		log.Printf("Error converting SRT to speech: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to convert SRT to speech",
-		})
-		return
-	}
-
-	// Lưu history
-	result := config.Db.Create(&config.CaptionHistory{
-		UserID:        userID,
-		VideoFilename: file.Filename,
-		Transcript:    transcript,
-		Suggestion:    captionsAndHashtag,
-		Segments:      jsonData,
-		SegmentsVi:    jsonDataVi,
-		SrtFile:       srtPath,
-		TTSFile:       ttsPath,
-		CreatedAt:     time.Now(),
-	})
-
-	if result.Error != nil {
-		log.WithError(result.Error).Error("Failed to save history")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save history: " + result.Error.Error()})
-		return
-	}
-
+	ttsPath, _ := service.ConvertSRTToSpeech(srtContent, "./storage", 1.2)
+	// Update history
+	captionHistory.Suggestion = captionsAndHashtag
+	captionHistory.SegmentsVi = jsonDataVi
+	captionHistory.SrtFile = srtPath
+	captionHistory.TTSFile = ttsPath
+	config.Db.Save(&captionHistory)
 	c.JSON(http.StatusOK, gin.H{
 		"transcript":         transcript,
 		"captionsAndHashtag": captionsAndHashtag,
 		"srt_file":           srtPath,
 		"tts_file":           ttsPath,
-		"id":                 result.RowsAffected,
+		"id":                 captionHistory.ID,
 	})
 }
 
@@ -213,95 +204,70 @@ func ProcessVideoHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process file"})
 		return
 	}
-
-	// Tính duration file audio (Whisper)
+	// Kiểm tra duration < 10 phút
 	duration, _ := util.GetAudioDuration(audioPath)
-	whisperTokens := int(duration/60.0*6 + 0.5)
-	if whisperTokens < 6 {
-		whisperTokens = 6
+	if duration > 600 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 10 phút."})
+		return
 	}
-	if err := DeductUserToken(userID, whisperTokens, "whisper", "Whisper transcribe", nil); err != nil {
+
+	// Gọi Whisper để lấy transcript và usage thực tế
+	transcript, segments, whisperUsage, err := service.TranscribeWhisperOpenAI(audioPath, apiKey)
+	if err != nil {
+		log.Printf("Error transcribing vocals: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to transcribe vocals: %v", err)})
+		return
+	}
+	whisperTokens := 0
+	if whisperUsage != nil && whisperUsage.TotalTokens > 0 {
+		whisperTokens = whisperUsage.TotalTokens
+	} else {
+		duration, _ := util.GetAudioDuration(audioPath)
+		whisperTokens = int(duration/60.0*6 + 0.5)
+		if whisperTokens < 6 {
+			whisperTokens = 6
+		}
+	}
+	// Save to database trước để lấy video_id
+	segmentsJSON, _ := json.Marshal(segments)
+	captionHistory := config.CaptionHistory{
+		UserID:        userID,
+		VideoFilename: uniqueName,
+		Transcript:    transcript,
+		Segments:      segmentsJSON,
+		CreatedAt:     time.Now(),
+	}
+	if err := config.Db.Create(&captionHistory).Error; err != nil {
+		log.Printf("Error saving to database: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save to database"})
+		return
+	}
+	videoID := &captionHistory.ID
+	if err := DeductUserToken(userID, whisperTokens, "whisper", "Whisper transcribe", videoID); err != nil {
 		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ token cho Whisper"})
 		return
 	}
-
-	// Extract background music
-	backgroundPath, err := service.ExtractBackgroundMusic(audioPath, uniqueName, videoDir)
-	if err != nil {
-		log.Printf("Error extracting background music: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to extract background music: %v", err),
-		})
-		return
-	}
-
-	// Extract vocals
-	vocalsPath, err := service.ExtractVocals(audioPath, uniqueName, videoDir)
-	if err != nil {
-		log.Printf("Error extracting vocals: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to extract vocals: %v", err),
-		})
-		return
-	}
-
-	// Get transcript from vocals
-	transcript, segments, err := service.TranscribeWhisperOpenAI(vocalsPath, apiKey)
-	if err != nil {
-		log.Printf("Error transcribing vocals: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to transcribe vocals: %v", err),
-		})
-		return
-	}
-
-	// Create original SRT file from segments
-	originalSrtContent := createSRT(segments)
-	originalSrtPath := filepath.Join(videoDir, strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName))+"_or.srt")
-	if err := os.WriteFile(originalSrtPath, []byte(originalSrtContent), 0644); err != nil {
-		log.Printf("Error creating original SRT file: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to create original SRT file: %v", err),
-		})
-		return
-	}
-
 	// Translate segments to Vietnamese
-	jsonData, err := json.Marshal(segments)
-	if err != nil {
-		log.Printf("Error marshaling segments: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to process segments: %v", err),
-		})
-		return
+	jsonData, _ := json.Marshal(segments)
+	geminiTokens := int(float64(len(jsonData))/62.5 + 0.9999)
+	if geminiTokens < 1 {
+		geminiTokens = 1
 	}
-
-	// Trừ token cho Gemini dịch
-	geminiTokens := 3
-	if err := DeductUserToken(userID, geminiTokens, "gemini", "Gemini dịch caption", nil); err != nil {
+	if err := DeductUserToken(userID, geminiTokens, "gemini", "Gemini dịch caption", videoID); err != nil {
 		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ token cho Gemini"})
 		return
 	}
 	translatedSegments, err := service.TranslateSegmentsWithGemini(string(jsonData), geminiKey)
 	if err != nil {
 		log.Printf("Error translating segments: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to translate segments: %v", err),
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to translate segments: %v", err)})
 		return
 	}
-
+	segmentsViJSON, _ := json.Marshal(translatedSegments)
 	// Create SRT file from translated segments
 	srtContent := createSRT(translatedSegments)
 	srtPath := filepath.Join(videoDir, strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName))+"_vi.srt")
-	if err := os.WriteFile(srtPath, []byte(srtContent), 0644); err != nil {
-		log.Printf("Error creating SRT file: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to create SRT file: %v", err),
-		})
-		return
-	}
-
+	_ = os.WriteFile(srtPath, []byte(srtContent), 0644)
 	// Lấy các tham số tuỳ chỉnh từ form-data
 	backgroundVolume := 1.2
 	ttsVolume := 0.66
@@ -321,91 +287,38 @@ func ProcessVideoHandler(c *gin.Context) {
 			speakingRate = f
 		}
 	}
-
-	// Trừ token cho Google TTS (ước tính: 1 token/62.5 ký tự, dùng tổng ký tự của srtContent)
+	// Trừ token cho Google TTS (tính theo ký tự của srtContent)
 	tokenPerChar := 1.0 / 62.5
 	ttsTokens := int(float64(len(srtContent))*tokenPerChar + 0.9999)
 	if ttsTokens < 1 {
 		ttsTokens = 1
 	}
-	if err := DeductUserToken(userID, ttsTokens, "tts", "Google TTS", nil); err != nil {
+	if err := DeductUserToken(userID, ttsTokens, "tts", "Google TTS", videoID); err != nil {
 		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ token cho TTS"})
 		return
 	}
-
 	// Convert translated SRT to speech
-	ttsPath, err := service.ConvertSRTToSpeech(srtContent, videoDir, speakingRate)
-	if err != nil {
-		log.Printf("Error converting SRT to speech: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to convert SRT to speech",
-		})
-		return
-	}
-
+	ttsPath, _ := service.ConvertSRTToSpeech(srtContent, videoDir, speakingRate)
 	// Merge video with background music and TTS audio
-	mergedVideoPath, err := service.MergeVideoWithAudio(videoPath, backgroundPath, ttsPath, videoDir, backgroundVolume, ttsVolume)
-	if err != nil {
-		log.Printf("Error merging video with audio: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to merge video with audio",
-		})
-		return
-	}
-
-	// Convert segments to JSON
-	segmentsJSON, err := json.Marshal(segments)
-	if err != nil {
-		log.Printf("Error marshaling segments: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to process segments",
-		})
-		return
-	}
-
-	segmentsViJSON, err := json.Marshal(translatedSegments)
-	if err != nil {
-		log.Printf("Error marshaling Vietnamese segments: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to process Vietnamese segments",
-		})
-		return
-	}
-
-	// Save to database
-	captionHistory := config.CaptionHistory{
-		UserID:          userID,
-		VideoFilename:   uniqueName,
-		Transcript:      transcript,
-		Segments:        segmentsJSON,
-		SegmentsVi:      segmentsViJSON,
-		BackgroundMusic: backgroundPath,
-		SrtFile:         srtPath,
-		OriginalSrtFile: originalSrtPath,
-		TTSFile:         ttsPath,
-		MergedVideoFile: mergedVideoPath,
-		CreatedAt:       time.Now(),
-	}
-
-	if err := config.Db.Create(&captionHistory).Error; err != nil {
-		log.Printf("Error saving to database: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to save to database",
-		})
-		return
-	}
-
+	backgroundPath, _ := service.ExtractBackgroundMusic(audioPath, uniqueName, videoDir)
+	mergedVideoPath, _ := service.MergeVideoWithAudio(videoPath, backgroundPath, ttsPath, videoDir, backgroundVolume, ttsVolume)
+	// Update history
+	captionHistory.SegmentsVi = segmentsViJSON
+	captionHistory.SrtFile = srtPath
+	captionHistory.TTSFile = ttsPath
+	captionHistory.MergedVideoFile = mergedVideoPath
+	captionHistory.BackgroundMusic = backgroundPath
+	config.Db.Save(&captionHistory)
 	c.JSON(http.StatusOK, gin.H{
-		"message":           "Video processed successfully",
-		"background_music":  backgroundPath,
-		"srt_file":          srtPath,
-		"original_srt_file": originalSrtPath,
-		"tts_file":          ttsPath,
-		"merged_video":      mergedVideoPath,
-		"transcript":        transcript,
-		"segments":          segments,
-		"segments_vi":       translatedSegments,
-		"id":                captionHistory.ID,
+		"message":          "Video processed successfully",
+		"background_music": backgroundPath,
+		"srt_file":         srtPath,
+		"tts_file":         ttsPath,
+		"merged_video":     mergedVideoPath,
+		"transcript":       transcript,
+		"segments":         segments,
+		"segments_vi":      translatedSegments,
+		"id":               captionHistory.ID,
 	})
 }
 

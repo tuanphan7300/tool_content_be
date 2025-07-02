@@ -68,10 +68,11 @@ func TextToSpeechHandler(c *gin.Context) {
 
 	// Lưu history trước để lấy video_id
 	history := config.CaptionHistory{
-		UserID:        userID,
-		Transcript:    req.Text,
-		VideoFilename: filename,
-		CreatedAt:     time.Now(),
+		UserID:              userID,
+		Transcript:          req.Text,
+		VideoFilename:       filename,
+		VideoFilenameOrigin: "text_to_speech.mp3",
+		CreatedAt:           time.Now(),
 	}
 
 	if err := config.Db.Create(&history).Error; err != nil {

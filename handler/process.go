@@ -76,11 +76,12 @@ func ProcessHandler(c *gin.Context) {
 	// Lưu history trước để lấy video_id
 	jsonData, _ := json.Marshal(segments)
 	captionHistory := config.CaptionHistory{
-		UserID:        userID,
-		VideoFilename: file.Filename,
-		Transcript:    transcript,
-		Segments:      jsonData,
-		CreatedAt:     time.Now(),
+		UserID:              userID,
+		VideoFilename:       file.Filename,
+		VideoFilenameOrigin: file.Filename,
+		Transcript:          transcript,
+		Segments:            jsonData,
+		CreatedAt:           time.Now(),
 	}
 	if err := config.Db.Create(&captionHistory).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save history"})
@@ -231,11 +232,12 @@ func ProcessVideoHandler(c *gin.Context) {
 	// Save to database trước để lấy video_id
 	segmentsJSON, _ := json.Marshal(segments)
 	captionHistory := config.CaptionHistory{
-		UserID:        userID,
-		VideoFilename: uniqueName,
-		Transcript:    transcript,
-		Segments:      segmentsJSON,
-		CreatedAt:     time.Now(),
+		UserID:              userID,
+		VideoFilename:       uniqueName,
+		VideoFilenameOrigin: file.Filename,
+		Transcript:          transcript,
+		Segments:            segmentsJSON,
+		CreatedAt:           time.Now(),
 	}
 	if err := config.Db.Create(&captionHistory).Error; err != nil {
 		log.Printf("Error saving to database: %v", err)

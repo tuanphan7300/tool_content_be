@@ -13,10 +13,15 @@ func SetupRoutes(r *gin.Engine) {
 	r.POST("/login", handler.LoginHandler)
 	r.GET("/ping", handler.PingPongHandler)
 
+	// Google OAuth routes
+	r.GET("/auth/google/login", handler.GoogleLoginHandler)
+	r.GET("/auth/google/callback", handler.GoogleCallbackHandler)
+
 	// Protected routes
 	protected := r.Group("/")
 	protected.Use(middleware.AuthMiddleware())
 	{
+		protected.GET("/user/profile", handler.GetUserProfileHandler)
 		protected.POST("/upload", handler.UploadHandler)
 		protected.POST("/process", handler.ProcessHandler)
 		protected.GET("/caption/:id", handler.CaptionHandler)
@@ -32,6 +37,15 @@ func SetupRoutes(r *gin.Engine) {
 		protected.GET("/token/history", handler.GetTokenHistory)
 		protected.POST("/token/add", handler.AddToken)
 		protected.POST("/token/deduct", handler.DeductToken)
+
+		// Queue management endpoints
+		protected.GET("/queue/status", handler.GetQueueStatus)
+		protected.GET("/queue/worker/status", handler.GetWorkerStatus)
+		protected.GET("/queue/job/:job_id/status", handler.GetJobStatus)
+		protected.GET("/queue/job/:job_id/result", handler.GetJobResult)
+		protected.GET("/queue/job/:job_id/wait", handler.WaitForJobCompletion)
+		protected.POST("/queue/worker/start", handler.StartWorkerService)
+		protected.POST("/queue/worker/stop", handler.StopWorkerService)
 	}
 
 	// Serve static files

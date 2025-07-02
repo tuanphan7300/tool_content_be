@@ -1,59 +1,294 @@
 version: '3.8'
 
 services:
-  app:
-    image: tool-content-be:${BRANCH_NAME:-latest}
-    container_name: ${APP_NAME}
+  # Vue.js Frontend
+  frontend:
+    build:
+      context: ../vue-landing-page-main
+      dockerfile: Dockerfile
+    container_name: tool-creator-frontend
+    restart: unless-stopped
     ports:
-      - "${APP_PORT}"
+      - "3000:80"
     environment:
-      - DB_HOST=db
-      - DB_PORT=${MYSQL_PORT}
-      - DB_USER=root
-      - DB_PASSWORD=${MYSQL_ROOT_PASSWORD}
-      - DB_NAME=${MYSQL_DATABASE}
+      - VITE_API_URL=https://${DOMAIN:-localhost}/api
     depends_on:
-      db:
+      - api
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # API Service
+  api:
+    build: .
+    container_name: tool-creator-api
+    restart: unless-stopped
+    ports:
+      - "8888:8888"
+    environment:
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=tool_creator
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=tool_creator
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - PORT=8888
+      - ENVIRONMENT=production
+      - STORAGE_PATH=/app/storage
+      - MODELS_PATH=/app/pretrained_models
+      - QUEUE_WORKERS=2
+      - QUEUE_TIMEOUT=1800
+    volumes:
+      - app_storage:/app/storage
+      - app_models:/app/pretrained_models
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
-      - backend
+      - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8888/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
-  db:
-    image: mysql:8.0
-    container_name: mysql-db-${BRANCH_NAME}
-    restart: always
+  # Worker Service
+  worker:
+    build: .
+    container_name: tool-creator-worker
+    restart: unless-stopped
+    command: ["./main", "--worker"]
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=tool_creator
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=tool_creator
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - PORT=8888
+      - ENVIRONMENT=production
+      - STORAGE_PATH=/app/storage
+      - MODELS_PATH=/app/pretrained_models
+      - QUEUE_WORKERS=2
+      - QUEUE_TIMEOUT=1800
+    volumes:
+      - app_storage:/app/storage
+      - app_models:/app/pretrained_models
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8888/queue/worker/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: tool-creator-mysql
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+      - MYSQL_DATABASE=tool_creator
+      - MYSQL_USER=tool_creator
+      - MYSQL_PASSWORD=${DB_PASSWORD}
     volumes:
       - mysql_data:/var/lib/mysql
+      - ./migration_add_video_filename_origin.sql:/docker-entrypoint-initdb.d/01-migration.sql
+    ports:
+      - "3306:3306"
     networks:
-      - backend
+      - app-network
+    command: --default-authentication-plugin=mysql_native_password --innodb-buffer-pool-size=256M --innodb-log-file-size=64M --max-connections=100
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: tool-creator-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - app-network
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --save 900 1 --save 300 10 --save 60 10000
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+        reservations:
+          cpus: '0.2'
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Nginx Reverse Proxy
   nginx:
     image: nginx:alpine
-    container_name: nginx-${BRANCH_NAME}
+    container_name: tool-creator-nginx
+    restart: unless-stopped
     ports:
       - "80:80"
+      - "443:443"
     volumes:
-      - ./nginx/conf.d:/etc/nginx/conf.d
-    networks:
-      - backend
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - app_storage:/var/www/static
     depends_on:
-      - app
+      - api
+      - frontend
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
     healthcheck:
-      test: ["CMD", "nginx", "-t"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
       retries: 3
+      start_period: 30s
 
-networks:
-  backend:
+  # Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: tool-creator-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: tool-creator-grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
 
 volumes:
   mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+  app_storage:
+    driver: local
+  app_models:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  app-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

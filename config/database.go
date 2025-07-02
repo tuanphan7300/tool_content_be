@@ -56,27 +56,34 @@ func ConnectDatabase() {
 
 // Cấu trúc CaptionHistory lưu trong DB
 type CaptionHistory struct {
-	ID              uint           `json:"id" gorm:"primaryKey"`
-	UserID          uint           `json:"user_id"`
-	VideoFilename   string         `json:"video_filename"`
-	Transcript      string         `json:"transcript"`
-	Suggestion      string         `json:"suggestion"`
-	Segments        datatypes.JSON `json:"segments"`
-	SegmentsVi      datatypes.JSON `json:"segments_vi"`
-	Timestamps      datatypes.JSON `json:"timestamps"`
-	BackgroundMusic string         `json:"background_music"`
-	SrtFile         string         `json:"srt_file"`
-	OriginalSrtFile string         `json:"original_srt_file"`
-	TTSFile         string         `json:"tts_file"`
-	MergedVideoFile string         `json:"merged_video_file"`
-	CreatedAt       time.Time      `json:"created_at"`
+	ID                  uint           `json:"id" gorm:"primaryKey"`
+	UserID              uint           `json:"user_id"`
+	VideoFilename       string         `json:"video_filename"`
+	VideoFilenameOrigin string         `json:"video_filename_origin"`
+	Transcript          string         `json:"transcript"`
+	Suggestion          string         `json:"suggestion"`
+	Segments            datatypes.JSON `json:"segments"`
+	SegmentsVi          datatypes.JSON `json:"segments_vi"`
+	Timestamps          datatypes.JSON `json:"timestamps"`
+	BackgroundMusic     string         `json:"background_music"`
+	SrtFile             string         `json:"srt_file"`
+	OriginalSrtFile     string         `json:"original_srt_file"`
+	TTSFile             string         `json:"tts_file"`
+	MergedVideoFile     string         `json:"merged_video_file"`
+	CreatedAt           time.Time      `json:"created_at"`
 }
 
 type Users struct {
-	ID           uint      `json:"id" gorm:"primaryKey"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"password_hash"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID           uint   `json:"id" gorm:"primaryKey"`
+	Email        string `json:"email"`
+	PasswordHash string `json:"password_hash"`
+	// Google OAuth fields
+	GoogleID      string    `json:"google_id" gorm:"index"`
+	Name          string    `json:"name"`
+	Picture       string    `json:"picture"`
+	EmailVerified bool      `json:"email_verified"`
+	AuthProvider  string    `json:"auth_provider"` // "local" or "google"
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // UserTokens lưu số dư token của user

@@ -44,12 +44,13 @@ func SaveHistory(c *gin.Context) {
 
 	// Lưu vào database
 	result := config.Db.Create(&config.CaptionHistory{
-		UserID:        userID,
-		VideoFilename: request.VideoFilename,
-		Transcript:    request.Transcript,
-		Suggestion:    request.Suggestion,
-		Timestamps:    datatypes.JSON(timestampsJSON),
-		Segments:      datatypes.JSON(request.Segments),
+		UserID:              userID,
+		VideoFilename:       request.VideoFilename,
+		VideoFilenameOrigin: request.VideoFilename,
+		Transcript:          request.Transcript,
+		Suggestion:          request.Suggestion,
+		Timestamps:          datatypes.JSON(timestampsJSON),
+		Segments:            datatypes.JSON(request.Segments),
 	})
 
 	if result.Error != nil {
@@ -99,33 +100,35 @@ func GetHistoryHandler(c *gin.Context) {
 
 	// Format response to include only filenames without paths
 	type HistoryResponse struct {
-		ID              uint      `json:"id"`
-		VideoFilename   string    `json:"video_filename"`
-		Transcript      string    `json:"transcript"`
-		Segments        string    `json:"segments"`
-		SegmentsVi      string    `json:"segments_vi"`
-		BackgroundMusic string    `json:"background_music"`
-		SrtFile         string    `json:"srt_file"`
-		OriginalSrtFile string    `json:"original_srt_file"`
-		TTSFile         string    `json:"tts_file"`
-		MergedVideoFile string    `json:"merged_video_file"`
-		CreatedAt       time.Time `json:"created_at"`
+		ID                  uint      `json:"id"`
+		VideoFilename       string    `json:"video_filename"`
+		VideoFilenameOrigin string    `json:"video_file_name_origin"`
+		Transcript          string    `json:"transcript"`
+		Segments            string    `json:"segments"`
+		SegmentsVi          string    `json:"segments_vi"`
+		BackgroundMusic     string    `json:"background_music"`
+		SrtFile             string    `json:"srt_file"`
+		OriginalSrtFile     string    `json:"original_srt_file"`
+		TTSFile             string    `json:"tts_file"`
+		MergedVideoFile     string    `json:"merged_video_file"`
+		CreatedAt           time.Time `json:"created_at"`
 	}
 
 	var response []HistoryResponse
 	for _, history := range histories {
 		response = append(response, HistoryResponse{
-			ID:              history.ID,
-			VideoFilename:   history.VideoFilename,
-			Transcript:      history.Transcript,
-			Segments:        string(history.Segments),
-			SegmentsVi:      string(history.SegmentsVi),
-			BackgroundMusic: filepath.Base(history.BackgroundMusic),
-			SrtFile:         filepath.Base(history.SrtFile),
-			OriginalSrtFile: filepath.Base(history.OriginalSrtFile),
-			TTSFile:         filepath.Base(history.TTSFile),
-			MergedVideoFile: filepath.Base(history.MergedVideoFile),
-			CreatedAt:       history.CreatedAt,
+			ID:                  history.ID,
+			VideoFilename:       history.VideoFilename,
+			VideoFilenameOrigin: history.VideoFilenameOrigin,
+			Transcript:          history.Transcript,
+			Segments:            string(history.Segments),
+			SegmentsVi:          string(history.SegmentsVi),
+			BackgroundMusic:     filepath.Base(history.BackgroundMusic),
+			SrtFile:             filepath.Base(history.SrtFile),
+			OriginalSrtFile:     filepath.Base(history.OriginalSrtFile),
+			TTSFile:             filepath.Base(history.TTSFile),
+			MergedVideoFile:     filepath.Base(history.MergedVideoFile),
+			CreatedAt:           history.CreatedAt,
 		})
 	}
 

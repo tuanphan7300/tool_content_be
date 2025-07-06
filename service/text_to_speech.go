@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	texttospeech "cloud.google.com/go/texttospeech/apiv1"
 	"cloud.google.com/go/texttospeech/apiv1/texttospeechpb"
 	"google.golang.org/api/option"
+	"log"
 )
 
 type TTSOptions struct {
@@ -175,6 +177,10 @@ func ConvertSRTToSpeech(srtContent string, videoDir string, speakingRate float64
 		return "", fmt.Errorf("failed to parse SRT: %v", err)
 	}
 
+	if len(entries) == 0 {
+		return "", fmt.Errorf("no SRT entries found")
+	}
+
 	// Create output directory if it doesn't exist
 	outputDir := filepath.Join(videoDir, "tts")
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -200,11 +206,33 @@ func ConvertSRTToSpeech(srtContent string, videoDir string, speakingRate float64
 	}
 	defer os.RemoveAll(tempDir)
 
-	// Process each segment
-	var segmentFiles []string
+	// Calculate total duration needed
+	totalDuration := entries[len(entries)-1].End
+	log.Printf("Total TTS duration needed: %.2f seconds", totalDuration)
 
+	// Create a silent base audio of total duration with consistent format
+	baseAudioFile := filepath.Join(tempDir, "base_silence.wav")
+	cmd := exec.Command("ffmpeg", 
+		"-f", "lavfi", 
+		"-i", fmt.Sprintf("anullsrc=r=44100:cl=stereo:d=%f", totalDuration), 
+		"-ar", "44100",
+		"-ac", "2",
+		"-acodec", "pcm_s16le",
+		"-y",
+		baseAudioFile)
+	
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("FFmpeg base silence error: %s", string(output))
+		return "", fmt.Errorf("failed to create base silence: %v", err)
+	}
+
+	// Process each segment and create individual TTS files
+	var segmentFiles []string
 	for i, entry := range entries {
-		// Convert text to speech first
+		log.Printf("Processing segment %d/%d: %.2f - %.2f", i+1, len(entries), entry.Start, entry.End)
+		
+		// Convert text to speech
 		req := texttospeechpb.SynthesizeSpeechRequest{
 			Input: &texttospeechpb.SynthesisInput{
 				InputSource: &texttospeechpb.SynthesisInput_Text{Text: entry.Text},
@@ -216,105 +244,522 @@ func ConvertSRTToSpeech(srtContent string, videoDir string, speakingRate float64
 			AudioConfig: &texttospeechpb.AudioConfig{
 				AudioEncoding: texttospeechpb.AudioEncoding_MP3,
 				SpeakingRate:  speakingRate,
+				SampleRateHertz: 44100,
 			},
 		}
 
 		resp, err := client.SynthesizeSpeech(ctx, &req)
 		if err != nil {
-			return "", fmt.Errorf("failed to synthesize speech: %v", err)
+			return "", fmt.Errorf("failed to synthesize speech for segment %d: %v", i, err)
 		}
 
 		// Save segment to temporary file
 		segmentFile := filepath.Join(tempDir, fmt.Sprintf("segment_%d.mp3", i))
 		if err := os.WriteFile(segmentFile, resp.AudioContent, 0644); err != nil {
-			return "", fmt.Errorf("failed to save segment: %v", err)
+			return "", fmt.Errorf("failed to save segment %d: %v", i, err)
 		}
 
-		// Get the actual duration of the generated audio
-		cmd := exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", segmentFile)
+		// Convert to WAV with consistent format and boost volume
+		wavSegmentFile := filepath.Join(tempDir, fmt.Sprintf("segment_%d.wav", i))
+		cmd := exec.Command("ffmpeg",
+			"-i", segmentFile,
+			"-af", "volume=3.0", // Boost volume 3x to make TTS louder
+			"-ar", "44100",
+			"-ac", "2",
+			"-acodec", "pcm_s16le",
+			"-y",
+			wavSegmentFile)
+		
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("FFmpeg segment conversion error: %s", string(output))
+			return "", fmt.Errorf("failed to convert segment %d to WAV: %v", i, err)
+		}
+
+		// Get actual duration of generated audio
+		cmd = exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", wavSegmentFile)
 		durationStr, err := cmd.Output()
 		if err != nil {
-			return "", fmt.Errorf("failed to get audio duration: %v", err)
+			return "", fmt.Errorf("failed to get audio duration for segment %d: %v", i, err)
 		}
 		actualDuration, err := strconv.ParseFloat(strings.TrimSpace(string(durationStr)), 64)
 		if err != nil {
-			return "", fmt.Errorf("failed to parse audio duration: %v", err)
+			return "", fmt.Errorf("failed to parse audio duration for segment %d: %v", i, err)
 		}
 
 		expectedDuration := entry.End - entry.Start
-		adjustedSegmentFile := segmentFile
+		log.Printf("Segment %d: expected %.2fs, actual %.2fs", i+1, expectedDuration, actualDuration)
 
-		// Nếu audio TTS ngắn hơn duration SRT, chèn silence vào cuối cho đủ
-		if actualDuration < expectedDuration-0.05 {
-			silenceFile := filepath.Join(tempDir, fmt.Sprintf("silence_end_%d.mp3", i))
-			silenceDuration := expectedDuration - actualDuration
-			cmd := exec.Command("ffmpeg", "-f", "lavfi", "-i", fmt.Sprintf("anullsrc=r=44100:cl=stereo:d=%f", silenceDuration), "-q:a", "0", "-map", "0:a", silenceFile)
-			if err := cmd.Run(); err != nil {
-				return "", fmt.Errorf("failed to create end silence: %v", err)
-			}
-			// Ghép segmentFile + silenceFile thành adjustedSegmentFile
-			concatList := filepath.Join(tempDir, fmt.Sprintf("concat_%d.txt", i))
-			concatContent := fmt.Sprintf("file '%s'\nfile '%s'\n", segmentFile, silenceFile)
-			if err := os.WriteFile(concatList, []byte(concatContent), 0644); err != nil {
-				return "", fmt.Errorf("failed to create concat list: %v", err)
-			}
-			adjustedSegmentFile = filepath.Join(tempDir, fmt.Sprintf("adjusted_segment_%d.mp3", i))
-			cmd = exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-i", concatList, "-c", "copy", adjustedSegmentFile)
-			if err := cmd.Run(); err != nil {
-				return "", fmt.Errorf("failed to concat segment and silence: %v", err)
-			}
-		} else if actualDuration > expectedDuration+0.05 {
-			// Nếu audio TTS dài hơn duration SRT, cắt bớt
-			trimmedFile := filepath.Join(tempDir, fmt.Sprintf("trimmed_segment_%d.mp3", i))
-			cmd := exec.Command("ffmpeg", "-i", segmentFile, "-t", fmt.Sprintf("%f", expectedDuration), "-c", "copy", trimmedFile)
-			if err := cmd.Run(); err != nil {
-				return "", fmt.Errorf("failed to trim segment: %v", err)
-			}
-			adjustedSegmentFile = trimmedFile
-		}
+		// Adjust segment duration to match SRT timing
+		adjustedWavFile := wavSegmentFile
+		if math.Abs(actualDuration-expectedDuration) > 0.05 { // 50ms tolerance
+			adjustedWavFile = filepath.Join(tempDir, fmt.Sprintf("adjusted_segment_%d.wav", i))
+			
+			if actualDuration < expectedDuration {
+				// Add silence to match expected duration
+				silenceDuration := expectedDuration - actualDuration
+				silenceFile := filepath.Join(tempDir, fmt.Sprintf("silence_%d.wav", i))
+				cmd := exec.Command("ffmpeg",
+					"-f", "lavfi",
+					"-i", fmt.Sprintf("anullsrc=r=44100:cl=stereo:d=%f", silenceDuration),
+					"-ar", "44100",
+					"-ac", "2",
+					"-acodec", "pcm_s16le",
+					"-y",
+					silenceFile)
+				
+				output, err := cmd.CombinedOutput()
+				if err != nil {
+					log.Printf("FFmpeg silence creation error: %s", string(output))
+					return "", fmt.Errorf("failed to create silence for segment %d: %v", i, err)
+				}
 
-		// Chèn silence trước nếu cần để bắt đầu đúng tại entry.Start
-		var silenceBefore float64
-		if entry.Start > 0 {
-			if i == 0 {
-				silenceBefore = entry.Start
+				// Concatenate segment with silence using filter_complex
+				cmd = exec.Command("ffmpeg",
+					"-i", wavSegmentFile,
+					"-i", silenceFile,
+					"-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1[a]",
+					"-map", "[a]",
+					"-ar", "44100",
+					"-ac", "2",
+					"-acodec", "pcm_s16le",
+					"-y",
+					adjustedWavFile)
+				
+				output, err = cmd.CombinedOutput()
+				if err != nil {
+					log.Printf("FFmpeg concat error: %s", string(output))
+					return "", fmt.Errorf("failed to concat segment %d with silence: %v", i, err)
+				}
 			} else {
-				prevEnd := entries[i-1].End
-				silenceBefore = entry.Start - prevEnd
-				if silenceBefore < 0 {
-					silenceBefore = 0
+				// Trim segment to match expected duration
+				cmd := exec.Command("ffmpeg",
+					"-i", wavSegmentFile,
+					"-t", fmt.Sprintf("%f", expectedDuration),
+					"-ar", "44100",
+					"-ac", "2",
+					"-acodec", "pcm_s16le",
+					"-y",
+					adjustedWavFile)
+				
+				output, err := cmd.CombinedOutput()
+				if err != nil {
+					log.Printf("FFmpeg trim error: %s", string(output))
+					return "", fmt.Errorf("failed to trim segment %d: %v", i, err)
 				}
 			}
 		}
-		if silenceBefore > 0 {
-			silenceFile := filepath.Join(tempDir, fmt.Sprintf("silence_%d.mp3", i))
-			cmd := exec.Command("ffmpeg", "-f", "lavfi", "-i", fmt.Sprintf("anullsrc=r=44100:cl=stereo:d=%f", silenceBefore), "-q:a", "0", "-map", "0:a", silenceFile)
-			if err := cmd.Run(); err != nil {
-				return "", fmt.Errorf("failed to create silence: %v", err)
-			}
-			segmentFiles = append(segmentFiles, silenceFile)
-		}
-		segmentFiles = append(segmentFiles, adjustedSegmentFile)
+
+		segmentFiles = append(segmentFiles, adjustedWavFile)
 	}
 
-	// Combine all segments
-	if len(segmentFiles) > 0 {
-		// Create a file list for ffmpeg
-		listFile := filepath.Join(tempDir, "filelist.txt")
-		var fileList strings.Builder
-		for _, file := range segmentFiles {
-			fileList.WriteString(fmt.Sprintf("file '%s'\n", file))
+	// Dynamic segment handling based on count
+	totalSegments := len(segmentFiles)
+	log.Printf("Processing %d segments for TTS", totalSegments)
+	
+	// For very large numbers of segments, use batch processing
+	if totalSegments > 200 {
+		log.Printf("Very large number of segments (%d), using batch processing", totalSegments)
+		return processSegmentsInBatches(segmentFiles, entries, baseAudioFile, outputPath, tempDir, totalDuration)
+	}
+	
+	// For large numbers of segments, use progressive mixing
+	if totalSegments > 50 {
+		log.Printf("Large number of segments (%d), using progressive mixing", totalSegments)
+		return processSegmentsProgressive(segmentFiles, entries, baseAudioFile, outputPath, tempDir, totalDuration)
+	}
+	
+	// For medium numbers of segments, use concat approach
+	if totalSegments > 20 {
+		log.Printf("Medium number of segments (%d), using concat approach", totalSegments)
+		return processSegmentsConcat(segmentFiles, entries, baseAudioFile, outputPath, tempDir, totalDuration)
+	}
+	
+	// For small numbers of segments (≤20), use individual adelay filters
+	log.Printf("Small number of segments (%d), using individual adelay filters", totalSegments)
+	
+	// Create individual delayed files first to avoid filter complexity issues
+	var delayedFiles []string
+	for i, segmentFile := range segmentFiles {
+		delayedFile := filepath.Join(tempDir, fmt.Sprintf("delayed_%d.wav", i))
+		
+		// Create delayed segment using FFmpeg with volume boost
+		cmd := exec.Command("ffmpeg",
+			"-i", segmentFile,
+			"-af", fmt.Sprintf("volume=3.0,adelay=%d|%d", int(entries[i].Start*1000), int(entries[i].Start*1000)),
+			"-ar", "44100",
+			"-ac", "2",
+			"-acodec", "pcm_s16le",
+			"-y",
+			delayedFile)
+		
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("FFmpeg delay error for segment %d: %s", i, string(output))
+			continue
 		}
-		if err := os.WriteFile(listFile, []byte(fileList.String()), 0644); err != nil {
-			return "", fmt.Errorf("failed to create file list: %v", err)
+		delayedFiles = append(delayedFiles, delayedFile)
+	}
+	
+	// Mix all delayed files with base silence
+	if len(delayedFiles) > 0 {
+		args := []string{"-i", baseAudioFile}
+		for _, delayedFile := range delayedFiles {
+			args = append(args, "-i", delayedFile)
 		}
+		args = append(args,
+			"-filter_complex", fmt.Sprintf("amix=inputs=%d:duration=longest:normalize=0[out]", len(delayedFiles)+1),
+			"-map", "[out]",
+			"-ar", "44100",
+			"-ac", "2",
+			"-acodec", "libmp3lame",
+			"-b:a", "192k",
+			"-y",
+			outputPath)
+		
+		cmd := exec.Command("ffmpeg", args...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("FFmpeg final mix error: %s", string(output))
+			return "", fmt.Errorf("failed to create final TTS audio: %v", err)
+		}
+		
+		log.Printf("TTS audio created successfully: %s", outputPath)
+		return outputPath, nil
+	} else {
+		// If no delayed files, just copy base silence
+		cmd := exec.Command("ffmpeg",
+			"-i", baseAudioFile,
+			"-acodec", "libmp3lame",
+			"-b:a", "192k",
+			"-y",
+			outputPath)
+		
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("FFmpeg copy error: %s", string(output))
+			return "", fmt.Errorf("failed to copy base audio: %v", err)
+		}
+		
+		log.Printf("TTS audio created successfully (base only): %s", outputPath)
+		return outputPath, nil
+	}
+	
 
-		// Combine all segments
-		cmd := exec.Command("ffmpeg", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", outputPath)
-		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("failed to combine segments: %v", err)
-		}
+	
+	// Verify final duration
+	cmd = exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", outputPath)
+	durationStr, err := cmd.Output()
+	if err != nil {
+		log.Printf("Warning: failed to get final TTS duration: %v", err)
+	} else {
+		finalDuration, _ := strconv.ParseFloat(strings.TrimSpace(string(durationStr)), 64)
+		log.Printf("Final TTS duration: %.2f seconds (expected: %.2f)", finalDuration, totalDuration)
 	}
 
 	return outputPath, nil
+}
+
+// processSegmentsProgressive xử lý segments lớn bằng cách mix từng phần
+func processSegmentsProgressive(segmentFiles []string, entries []SRTEntry, baseAudioFile, outputPath, tempDir string, totalDuration float64) (string, error) {
+	log.Printf("Starting progressive mixing for %d segments", len(segmentFiles))
+	
+	// Tạo base silence
+	baseSilence := filepath.Join(tempDir, "base_silence.wav")
+	cmd := exec.Command("ffmpeg", 
+		"-f", "lavfi", 
+		"-i", fmt.Sprintf("anullsrc=r=44100:cl=stereo:d=%f", totalDuration), 
+		"-ar", "44100",
+		"-ac", "2",
+		"-acodec", "pcm_s16le",
+		"-y",
+		baseSilence)
+	
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to create base silence: %v", err)
+	}
+	
+	// Xử lý từng batch 50 segments
+	batchSize := 50
+	currentMixFile := baseSilence
+	
+	for i := 0; i < len(segmentFiles); i += batchSize {
+		end := i + batchSize
+		if end > len(segmentFiles) {
+			end = len(segmentFiles)
+		}
+		
+		batchSegments := segmentFiles[i:end]
+		batchEntries := entries[i:end]
+		
+		log.Printf("Processing batch %d-%d (%d segments)", i+1, end, len(batchSegments))
+		
+		// Tạo delayed files cho batch này
+		var delayedFiles []string
+		for j, segmentFile := range batchSegments {
+			delayedFile := filepath.Join(tempDir, fmt.Sprintf("delayed_batch_%d_%d.wav", i, j))
+			
+			cmd := exec.Command("ffmpeg",
+				"-i", segmentFile,
+				"-af", fmt.Sprintf("volume=3.0,adelay=%d|%d", int(batchEntries[j].Start*1000), int(batchEntries[j].Start*1000)),
+				"-ar", "44100",
+				"-ac", "2",
+				"-acodec", "pcm_s16le",
+				"-y",
+				delayedFile)
+			
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				log.Printf("FFmpeg delay error for batch segment %d: %s", j, string(output))
+				continue
+			}
+			delayedFiles = append(delayedFiles, delayedFile)
+		}
+		
+		if len(delayedFiles) == 0 {
+			continue
+		}
+		
+		// Mix batch với current mix
+		batchMixFile := filepath.Join(tempDir, fmt.Sprintf("batch_mix_%d.wav", i))
+		args := []string{"-i", currentMixFile}
+		for _, delayedFile := range delayedFiles {
+			args = append(args, "-i", delayedFile)
+		}
+		args = append(args,
+			"-filter_complex", fmt.Sprintf("amix=inputs=%d:duration=longest:normalize=0[out]", len(delayedFiles)+1),
+			"-map", "[out]",
+			"-ar", "44100",
+			"-ac", "2",
+			"-acodec", "pcm_s16le",
+			"-y",
+			batchMixFile)
+		
+		cmd = exec.Command("ffmpeg", args...)
+		output, err = cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("FFmpeg batch mix error: %s", string(output))
+			continue
+		}
+		
+		currentMixFile = batchMixFile
+	}
+	
+	// Convert final mix to MP3
+	cmd = exec.Command("ffmpeg",
+		"-i", currentMixFile,
+		"-acodec", "libmp3lame",
+		"-b:a", "192k",
+		"-y",
+		outputPath)
+	
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to convert final mix to MP3: %v", err)
+	}
+	
+	log.Printf("Progressive mixing completed successfully: %s", outputPath)
+	return outputPath, nil
+}
+
+// processSegmentsInBatches xử lý segments rất lớn bằng cách xử lý theo batch
+func processSegmentsInBatches(segmentFiles []string, entries []SRTEntry, baseAudioFile, outputPath, tempDir string, totalDuration float64) (string, error) {
+	log.Printf("Starting batch processing for %d segments", len(segmentFiles))
+	
+	// Tạo base silence
+	baseSilence := filepath.Join(tempDir, "base_silence.wav")
+	cmd := exec.Command("ffmpeg", 
+		"-f", "lavfi", 
+		"-i", fmt.Sprintf("anullsrc=r=44100:cl=stereo:d=%f", totalDuration), 
+		"-ar", "44100",
+		"-ac", "2",
+		"-acodec", "pcm_s16le",
+		"-y",
+		baseSilence)
+	
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to create base silence: %v", err)
+	}
+	
+	// Xử lý theo batch 30 segments
+	batchSize := 30
+	var batchFiles []string
+	
+	for i := 0; i < len(segmentFiles); i += batchSize {
+		end := i + batchSize
+		if end > len(segmentFiles) {
+			end = len(segmentFiles)
+		}
+		
+		batchSegments := segmentFiles[i:end]
+		batchEntries := entries[i:end]
+		
+		log.Printf("Processing batch %d-%d (%d segments)", i+1, end, len(batchSegments))
+		
+		// Tạo batch file
+		batchFile := filepath.Join(tempDir, fmt.Sprintf("batch_%d.wav", i))
+		
+		// Tạo delayed files cho batch này
+		var delayedFiles []string
+		for j, segmentFile := range batchSegments {
+			delayedFile := filepath.Join(tempDir, fmt.Sprintf("delayed_batch_%d_%d.wav", i, j))
+			
+			cmd := exec.Command("ffmpeg",
+				"-i", segmentFile,
+				"-af", fmt.Sprintf("volume=3.0,adelay=%d|%d", int(batchEntries[j].Start*1000), int(batchEntries[j].Start*1000)),
+				"-ar", "44100",
+				"-ac", "2",
+				"-acodec", "pcm_s16le",
+				"-y",
+				delayedFile)
+			
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				log.Printf("FFmpeg delay error for batch segment %d: %s", j, string(output))
+				continue
+			}
+			delayedFiles = append(delayedFiles, delayedFile)
+		}
+		
+		if len(delayedFiles) == 0 {
+			continue
+		}
+		
+		// Mix batch
+		args := []string{"-i", baseSilence}
+		for _, delayedFile := range delayedFiles {
+			args = append(args, "-i", delayedFile)
+		}
+		args = append(args,
+			"-filter_complex", fmt.Sprintf("amix=inputs=%d:duration=longest[out]", len(delayedFiles)+1),
+			"-map", "[out]",
+			"-ar", "44100",
+			"-ac", "2",
+			"-acodec", "pcm_s16le",
+			"-y",
+			batchFile)
+		
+		cmd = exec.Command("ffmpeg", args...)
+		output, err = cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("FFmpeg batch mix error: %s", string(output))
+			continue
+		}
+		
+		batchFiles = append(batchFiles, batchFile)
+	}
+	
+	// Mix tất cả batch files
+	if len(batchFiles) == 0 {
+		// Nếu không có batch nào, copy base silence
+		cmd = exec.Command("ffmpeg",
+			"-i", baseSilence,
+			"-acodec", "libmp3lame",
+			"-b:a", "192k",
+			"-y",
+			outputPath)
+		
+		output, err = cmd.CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("failed to copy base audio: %v", err)
+		}
+	} else {
+		// Mix tất cả batches
+		args := []string{"-i", baseSilence}
+		for _, batchFile := range batchFiles {
+			args = append(args, "-i", batchFile)
+		}
+		args = append(args,
+			"-filter_complex", fmt.Sprintf("amix=inputs=%d:duration=longest[out]", len(batchFiles)+1),
+			"-map", "[out]",
+			"-ar", "44100",
+			"-ac", "2",
+			"-acodec", "libmp3lame",
+			"-b:a", "192k",
+			"-y",
+			outputPath)
+		
+		cmd = exec.Command("ffmpeg", args...)
+		output, err = cmd.CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("failed to mix all batches: %v", err)
+		}
+	}
+	
+	log.Printf("Batch processing completed successfully: %s", outputPath)
+	return outputPath, nil
+}
+
+// processSegmentsConcat xử lý segments trung bình bằng cách tạo delayed files riêng biệt
+func processSegmentsConcat(segmentFiles []string, entries []SRTEntry, baseAudioFile, outputPath, tempDir string, totalDuration float64) (string, error) {
+	log.Printf("Starting concat approach for %d segments", len(segmentFiles))
+	
+	// Create individual delayed files first
+	var delayedFiles []string
+	for i, segmentFile := range segmentFiles {
+		delayedFile := filepath.Join(tempDir, fmt.Sprintf("delayed_%d.wav", i))
+		
+		// Create delayed segment using FFmpeg with volume boost
+		cmd := exec.Command("ffmpeg",
+			"-i", segmentFile,
+			"-af", fmt.Sprintf("volume=3.0,adelay=%d|%d", int(entries[i].Start*1000), int(entries[i].Start*1000)),
+			"-ar", "44100",
+			"-ac", "2",
+			"-acodec", "pcm_s16le",
+			"-y",
+			delayedFile)
+		
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("FFmpeg delay error for segment %d: %s", i, string(output))
+			continue
+		}
+		delayedFiles = append(delayedFiles, delayedFile)
+	}
+	
+	// Mix all delayed files with base silence
+	if len(delayedFiles) > 0 {
+		args := []string{"-i", baseAudioFile}
+		for _, delayedFile := range delayedFiles {
+			args = append(args, "-i", delayedFile)
+		}
+		args = append(args,
+			"-filter_complex", fmt.Sprintf("amix=inputs=%d:duration=longest[out]", len(delayedFiles)+1),
+			"-map", "[out]",
+			"-ar", "44100",
+			"-ac", "2",
+			"-acodec", "libmp3lame",
+			"-b:a", "192k",
+			"-y",
+			outputPath)
+		
+		cmd := exec.Command("ffmpeg", args...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("FFmpeg final mix error: %s", string(output))
+			return "", fmt.Errorf("failed to create final TTS audio: %v", err)
+		}
+		
+		log.Printf("TTS audio created successfully: %s", outputPath)
+		return outputPath, nil
+	} else {
+		// If no delayed files, just copy base silence
+		cmd := exec.Command("ffmpeg",
+			"-i", baseAudioFile,
+			"-acodec", "libmp3lame",
+			"-b:a", "192k",
+			"-y",
+			outputPath)
+		
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("FFmpeg copy error: %s", string(output))
+			return "", fmt.Errorf("failed to copy base audio: %v", err)
+		}
+		
+		log.Printf("TTS audio created successfully (base only): %s", outputPath)
+		return outputPath, nil
+	}
 }

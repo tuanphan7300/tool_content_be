@@ -34,6 +34,70 @@ type Candidate struct {
 	Content Content `json:"content"`
 }
 
+// CountTokensResponse định nghĩa phản hồi từ API countTokens
+type CountTokensResponse struct {
+	TotalTokens int `json:"totalTokens"`
+}
+
+// CountTokens tính toán số token sẽ được sử dụng cho một prompt
+func CountTokens(prompt, apiKey string) (int, error) {
+	// Endpoint của Gemini API để đếm token
+	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:countTokens"
+
+	// Tạo payload cho request
+	requestBody := GeminiRequest{
+		Contents: []Content{
+			{
+				Parts: []Part{
+					{
+						Text: prompt,
+					},
+				},
+			},
+		},
+	}
+
+	// Chuyển payload thành JSON
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return 0, fmt.Errorf("failed to marshal count tokens request: %v", err)
+	}
+
+	// Tạo HTTP request
+	req, err := http.NewRequest("POST", url+"?key="+apiKey, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return 0, fmt.Errorf("failed to create count tokens request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Gửi request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("failed to send count tokens request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Đọc phản hồi
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read count tokens response: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("count tokens API error: %s", string(body))
+	}
+
+	// Parse phản hồi
+	var countResp CountTokensResponse
+	err = json.Unmarshal(body, &countResp)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse count tokens response: %v", err)
+	}
+
+	return countResp.TotalTokens, nil
+}
+
 // GenerateWithGemini gửi text tới Gemini API và nhận phản hồi (ví dụ: caption, dịch, hoặc phân tích)
 func GenerateWithGemini(prompt, apiKey string) (string, error) {
 	// Endpoint của Gemini API (Google AI API)

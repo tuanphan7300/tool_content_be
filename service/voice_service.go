@@ -103,7 +103,13 @@ func separateAudio(audioPath string, fileName string, stemType string, videoDir 
 	}
 
 	// Use Demucs to separate audio
-	cmd := exec.Command("/Users/phantuan/Library/Python/3.9/bin/demucs",
+	//cmd := exec.Command("/Users/phantuan/Library/Python/3.9/bin/demucs",
+	//	"-n", "htdemucs",
+	//	"--two-stems", "vocals",
+	//	"-o", outputDir,
+	//	audioPath,
+	//)
+	cmd := exec.Command("/Users/phantuan/Library/Frameworks/Python.framework/Versions/3.11/bin/demucs",
 		"-n", "htdemucs",
 		"--two-stems", "vocals",
 		"-o", outputDir,
@@ -177,6 +183,8 @@ func ExtractVocals(audioPath string, fileName string, videoDir string) (string, 
 
 // MergeVideoWithAudio merges a video with background music and TTS audio
 func MergeVideoWithAudio(videoPath, backgroundMusicPath, ttsPath, videoDir string, backgroundVolume, ttsVolume float64) (string, error) {
+	log.Printf("MergeVideoWithAudio called with volumes - background: %.2f, tts: %.2f", backgroundVolume, ttsVolume)
+	
 	// Create output directory if it doesn't exist
 	outputDir := filepath.Join(videoDir, "merged")
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -187,13 +195,43 @@ func MergeVideoWithAudio(videoPath, backgroundMusicPath, ttsPath, videoDir strin
 	timestamp := time.Now().Format("20060102_150405")
 	outputPath := filepath.Join(outputDir, fmt.Sprintf("merged_%s.mp4", timestamp))
 
-	// Create a complex filter để mix audio với volume tuỳ chỉnh
-	filterComplex := fmt.Sprintf(
-		"[1:a]volume=%.2f[bg];[2:a]volume=%.2f[tts];[bg][tts]amix=inputs=2:duration=longest[audio]",
-		backgroundVolume, ttsVolume,
-	)
+	// Get video duration first
+	videoDurationCmd := exec.Command("ffprobe",
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		videoPath)
+	videoDurationOutput, err := videoDurationCmd.Output()
+	if err != nil {
+		log.Printf("Error getting video duration: %v", err)
+	} else {
+		log.Printf("Video duration: %s seconds", string(videoDurationOutput))
+	}
 
-	// Merge video with adjusted audio
+	// Get TTS duration
+	ttsDurationCmd := exec.Command("ffprobe",
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		ttsPath)
+	ttsDurationOutput, err := ttsDurationCmd.Output()
+	if err != nil {
+		log.Printf("Error getting TTS duration: %v", err)
+	} else {
+		log.Printf("TTS duration: %s seconds", string(ttsDurationOutput))
+	}
+
+	// Create a complex filter để mix audio với volume tuỳ chỉnh và đảm bảo đồng bộ
+	// Sử dụng apad để đảm bảo background music có đủ độ dài
+	// Thêm normalize=0 để tránh amix tự động normalize volume
+	filterComplex := fmt.Sprintf(
+		"[1:a]volume=%.2f,apad=whole_dur=%s[bg];[2:a]volume=%.2f[tts];[bg][tts]amix=inputs=2:duration=longest:normalize=0[audio]",
+		backgroundVolume, strings.TrimSpace(string(videoDurationOutput)), ttsVolume,
+	)
+	
+	log.Printf("FFmpeg filter complex: %s", filterComplex)
+
+	// Merge video with adjusted audio - sử dụng -shortest để đảm bảo đồng bộ
 	cmd := exec.Command("ffmpeg",
 		"-i", videoPath, // Input video
 		"-i", backgroundMusicPath, // Background music
@@ -204,13 +242,33 @@ func MergeVideoWithAudio(videoPath, backgroundMusicPath, ttsPath, videoDir strin
 		"-c:v", "copy", // Copy video codec
 		"-c:a", "aac", // Use AAC for audio
 		"-b:a", "192k", // Set audio bitrate
-		"-shortest", // End when shortest input ends
+		"-shortest", // End when shortest input ends - quan trọng cho đồng bộ
+		"-avoid_negative_ts", "make_zero", // Tránh timestamp âm
+		"-fflags", "+genpts", // Generate presentation timestamps
 		"-y",        // Overwrite output file
 		outputPath,
 	)
 
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to merge video with audio: %v", err)
+	// Capture command output for better error handling
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("FFmpeg merge error output: %s", string(output))
+		return "", fmt.Errorf("failed to merge video with audio: %v, output: %s", err, string(output))
+	}
+
+	log.Printf("FFmpeg merge output: %s", string(output))
+
+	// Verify final video duration
+	finalDurationCmd := exec.Command("ffprobe",
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		outputPath)
+	finalDurationOutput, err := finalDurationCmd.Output()
+	if err != nil {
+		log.Printf("Warning: failed to get final video duration: %v", err)
+	} else {
+		log.Printf("Final merged video duration: %s seconds", string(finalDurationOutput))
 	}
 
 	return outputPath, nil

@@ -29,7 +29,7 @@ func ConnectDatabase() {
 		configg.DB_USER = "root"
 	}
 	if configg.DB_PASSWORD == "" {
-		configg.DB_PASSWORD = "root"
+		configg.DB_PASSWORD = "Root@123"
 	}
 
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/tool?charset=utf8mb4&parseTime=True&loc=Local",
@@ -58,19 +58,20 @@ func ConnectDatabase() {
 type CaptionHistory struct {
 	ID                  uint           `json:"id" gorm:"primaryKey"`
 	UserID              uint           `json:"user_id"`
-	VideoFilename       string         `json:"video_filename"`
-	VideoFilenameOrigin string         `json:"video_filename_origin"`
-	Transcript          string         `json:"transcript"`
-	Suggestion          string         `json:"suggestion"`
+	VideoFilename       string         `json:"video_filename" gorm:"type:varchar(500);index:idx_video_filename,length:255"`
+	VideoFilenameOrigin string         `json:"video_filename_origin" gorm:"type:varchar(500)"`
+	Transcript          string         `json:"transcript" gorm:"type:text"`
+	Suggestion          string         `json:"suggestion" gorm:"type:text"`
 	Segments            datatypes.JSON `json:"segments"`
 	SegmentsVi          datatypes.JSON `json:"segments_vi"`
 	Timestamps          datatypes.JSON `json:"timestamps"`
-	BackgroundMusic     string         `json:"background_music"`
-	SrtFile             string         `json:"srt_file"`
-	OriginalSrtFile     string         `json:"original_srt_file"`
-	TTSFile             string         `json:"tts_file"`
-	MergedVideoFile     string         `json:"merged_video_file"`
+	BackgroundMusic     string         `json:"background_music" gorm:"type:varchar(500)"`
+	SrtFile             string         `json:"srt_file" gorm:"type:varchar(500)"`
+	OriginalSrtFile     string         `json:"original_srt_file" gorm:"type:varchar(500)"`
+	TTSFile             string         `json:"tts_file" gorm:"type:varchar(500)"`
+	MergedVideoFile     string         `json:"merged_video_file" gorm:"type:varchar(500)"`
 	CreatedAt           time.Time      `json:"created_at"`
+	UpdatedAt           time.Time      `json:"updated_at"`
 }
 
 type Users struct {

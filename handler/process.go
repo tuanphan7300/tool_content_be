@@ -249,49 +249,94 @@ func ProcessVideoHandler(c *gin.Context) {
 		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ token cho Whisper"})
 		return
 	}
-	// Translate segments to Vietnamese
-	jsonData, _ := json.Marshal(segments)
-	geminiTokens := int(float64(len(jsonData))/62.5 + 0.9999)
-	if geminiTokens < 1 {
-		geminiTokens = 1
+	// Create original SRT file from Whisper segments first
+	originalSRTPath := filepath.Join(videoDir, strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName))+"_original.srt")
+	originalSRTContent := createSRT(segments)
+	if err := os.WriteFile(originalSRTPath, []byte(originalSRTContent), 0644); err != nil {
+		log.Printf("Error creating original SRT file: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create original SRT file"})
+		return
 	}
-	if err := DeductUserToken(userID, geminiTokens, "gemini", "Gemini dịch caption", videoID); err != nil {
+
+	// Translate the original SRT file using Gemini
+	translatedSRTContent, err := service.TranslateSRTFile(originalSRTPath, geminiKey)
+	if err != nil {
+		log.Printf("Error translating SRT file: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to translate SRT: %v", err)})
+		return
+	}
+
+	// Save translated SRT file
+	translatedSRTPath := filepath.Join(videoDir, strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName))+"_vi.srt")
+	if err := os.WriteFile(translatedSRTPath, []byte(translatedSRTContent), 0644); err != nil {
+		log.Printf("Error saving translated SRT file: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save translated SRT file"})
+		return
+	}
+
+	// Calculate tokens for Gemini using original SRT content
+	// Estimate tokens using Gemini API
+	geminiTokens, err := service.EstimateGeminiTokens(originalSRTContent, geminiKey)
+	if err != nil {
+		log.Printf("Error estimating tokens: %v, using fallback calculation", err)
+		// Fallback to character-based calculation
+		geminiTokens = int(float64(len(originalSRTContent))/62.5 + 0.9999)
+		if geminiTokens < 1 {
+			geminiTokens = 1
+		}
+	}
+
+	log.Printf("Gemini tokens estimated: %d", geminiTokens)
+
+	if err := DeductUserToken(userID, geminiTokens, "gemini", "Gemini dịch SRT", videoID); err != nil {
 		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ token cho Gemini"})
 		return
 	}
-	translatedSegments, err := service.TranslateSegmentsWithGemini(string(jsonData), geminiKey)
-	if err != nil {
-		log.Printf("Error translating segments: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to translate segments: %v", err)})
-		return
-	}
-	segmentsViJSON, _ := json.Marshal(translatedSegments)
-	// Create SRT file from translated segments
-	srtContent := createSRT(translatedSegments)
-	srtPath := filepath.Join(videoDir, strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName))+"_vi.srt")
-	_ = os.WriteFile(srtPath, []byte(srtContent), 0644)
+
+	// Use original segments for database storage (no need to parse SRT back to segments)
+	segmentsViJSON, _ := json.Marshal(segments)
 	// Lấy các tham số tuỳ chỉnh từ form-data
 	backgroundVolume := 1.2
-	ttsVolume := 0.66
+	ttsVolume := 1.5  // Tăng default TTS volume để voice rõ ràng hơn
 	speakingRate := 1.2
+
+	// Log raw form values
+	log.Printf("Raw form values - background_volume: %s, tts_volume: %s, speaking_rate: %s",
+		c.PostForm("background_volume"), c.PostForm("tts_volume"), c.PostForm("speaking_rate"))
+
 	if v := c.PostForm("background_volume"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			backgroundVolume = f
+			log.Printf("Parsed background_volume: %.2f", backgroundVolume)
+		} else {
+			log.Printf("Failed to parse background_volume: %s, error: %v", v, err)
 		}
 	}
 	if v := c.PostForm("tts_volume"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			ttsVolume = f
+			log.Printf("Parsed tts_volume: %.2f", ttsVolume)
+		} else {
+			log.Printf("Failed to parse tts_volume: %s, error: %v", v, err)
 		}
 	}
 	if v := c.PostForm("speaking_rate"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			speakingRate = f
+			log.Printf("Parsed speaking_rate: %.2f", speakingRate)
+		} else {
+			log.Printf("Failed to parse speaking_rate: %s, error: %v", v, err)
 		}
 	}
+
+	log.Printf("Final volume settings - background: %.2f, tts: %.2f, speaking_rate: %.2f",
+		backgroundVolume, ttsVolume, speakingRate)
+	// Read translated SRT content for TTS
+	srtContentBytes, _ := os.ReadFile(translatedSRTPath)
+
 	// Trừ token cho Google TTS (tính theo ký tự của srtContent)
 	tokenPerChar := 1.0 / 62.5
-	ttsTokens := int(float64(len(srtContent))*tokenPerChar + 0.9999)
+	ttsTokens := int(float64(len(srtContentBytes))*tokenPerChar + 0.9999)
 	if ttsTokens < 1 {
 		ttsTokens = 1
 	}
@@ -300,13 +345,34 @@ func ProcessVideoHandler(c *gin.Context) {
 		return
 	}
 	// Convert translated SRT to speech
-	ttsPath, _ := service.ConvertSRTToSpeech(srtContent, videoDir, speakingRate)
+	ttsPath, err := service.ConvertSRTToSpeech(string(srtContentBytes), videoDir, speakingRate)
+	if err != nil {
+		log.Printf("Error converting SRT to speech: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to convert SRT to speech: %v", err)})
+		return
+	}
 	// Merge video with background music and TTS audio
-	backgroundPath, _ := service.ExtractBackgroundMusic(audioPath, uniqueName, videoDir)
-	mergedVideoPath, _ := service.MergeVideoWithAudio(videoPath, backgroundPath, ttsPath, videoDir, backgroundVolume, ttsVolume)
+	backgroundPath, err := service.ExtractBackgroundMusicAsync(audioPath, uniqueName, videoDir)
+	if err != nil {
+		log.Printf("Error extracting background music: %v", err)
+		log.Printf("Trying FFmpeg fallback...")
+		backgroundPath, err = service.FallbackSeparateAudio(audioPath, uniqueName, "no_vocals", videoDir)
+		if err != nil {
+			log.Printf("FFmpeg fallback also failed: %v", err)
+			// Sử dụng audio gốc nếu tách thất bại
+			backgroundPath = audioPath
+		}
+	}
+
+	mergedVideoPath, err := service.MergeVideoWithAudio(videoPath, backgroundPath, ttsPath, videoDir, backgroundVolume, ttsVolume)
+	if err != nil {
+		log.Printf("Error merging video: %v", err)
+		mergedVideoPath = ""
+	}
 	// Update history
 	captionHistory.SegmentsVi = segmentsViJSON
-	captionHistory.SrtFile = srtPath
+	captionHistory.SrtFile = translatedSRTPath
+	captionHistory.OriginalSrtFile = originalSRTPath
 	captionHistory.TTSFile = ttsPath
 	captionHistory.MergedVideoFile = mergedVideoPath
 	captionHistory.BackgroundMusic = backgroundPath
@@ -314,12 +380,12 @@ func ProcessVideoHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message":          "Video processed successfully",
 		"background_music": backgroundPath,
-		"srt_file":         srtPath,
+		"srt_file":         translatedSRTPath,
 		"tts_file":         ttsPath,
 		"merged_video":     mergedVideoPath,
 		"transcript":       transcript,
 		"segments":         segments,
-		"segments_vi":      translatedSegments,
+		"segments_vi":      segments,
 		"id":               captionHistory.ID,
 	})
 }

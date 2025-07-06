@@ -2,7 +2,7 @@ module creator-tool-backend
 
 go 1.23.0
 
-toolchain go1.23.9
+toolchain go1.23.10
 
 require (
 	github.com/gin-contrib/cors v1.7.5
@@ -12,6 +12,7 @@ require (
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/crypto v0.36.0
+	golang.org/x/oauth2 v0.16.0
 	google.golang.org/api v0.160.0
 	gorm.io/datatypes v1.2.0
 	gorm.io/driver/mysql v1.5.1
@@ -21,7 +22,6 @@ require (
 require (
 	cloud.google.com/go v0.112.0 // indirect
 	cloud.google.com/go/longrunning v0.5.5 // indirect
-	golang.org/x/oauth2 v0.16.0 // indirect
 )
 
 require (

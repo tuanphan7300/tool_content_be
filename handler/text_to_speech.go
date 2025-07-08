@@ -82,14 +82,29 @@ func TextToSpeechHandler(c *gin.Context) {
 	}
 
 	videoID := &history.ID
-	// Trừ token cho Google TTS
-	tokenPerChar := 1.0 / 62.5
-	tokens := int(float64(len(req.Text))*tokenPerChar + 0.9999) // làm tròn lên
-	if tokens < 1 {
-		tokens = 1
+	// Tính chi phí TTS theo số ký tự
+	pricingService := service.NewPricingService()
+	creditService := service.NewCreditService()
+	useWavenet := false // Đổi thành true nếu sử dụng Wavenet voices
+
+	baseCost, err := pricingService.CalculateTTSCost(req.Text, useWavenet)
+	if err != nil {
+		logrus.Errorf("Không tính được chi phí TTS: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không tính được chi phí TTS"})
+		return
 	}
-	if err := DeductUserToken(userID, tokens, "tts", "Google TTS", videoID); err != nil {
-		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ token cho TTS"})
+
+	err = creditService.DeductCredits(
+		userID,
+		baseCost,
+		"tts",
+		"Google TTS",
+		videoID,
+		"character",
+		float64(len([]rune(req.Text))),
+	)
+	if err != nil {
+		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ credit cho TTS"})
 		return
 	}
 

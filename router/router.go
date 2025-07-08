@@ -31,12 +31,17 @@ func SetupRoutes(r *gin.Engine) {
 		protected.GET("/history/:id", handler.GetHistoryByID)
 		protected.POST("/process-voice", handler.ProcessVoiceHandler)
 		protected.POST("/process-background", handler.ProcessBackgroundMusicHandler)
-		protected.POST("/process-video", handler.ProcessVideoHandler)
+		protected.POST("/process-video", middleware.ProcessStatusMiddleware("process-video"), handler.ProcessVideoHandler)
 		protected.POST("/text-to-speech", handler.TextToSpeechHandler)
-		protected.GET("/token/balance", handler.GetTokenBalance)
-		protected.GET("/token/history", handler.GetTokenHistory)
-		protected.POST("/token/add", handler.AddToken)
-		protected.POST("/token/deduct", handler.DeductToken)
+
+		// Credit endpoints (new system)
+		protected.GET("/credit/balance", handler.GetCreditBalance)
+		protected.GET("/credit/history", handler.GetCreditHistory)
+		protected.POST("/credit/add", handler.AddCredits)
+		protected.POST("/credit/estimate", handler.EstimateCost)
+
+		// Legacy estimate endpoint
+		protected.POST("/estimate-cost", handler.EstimateProcessVideoCostHandler)
 
 		// Queue management endpoints
 		protected.GET("/queue/status", handler.GetQueueStatus)

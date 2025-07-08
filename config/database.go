@@ -91,6 +91,76 @@ type Users struct {
 // GORM sẽ tự động tạo bảng user_tokens
 // GORM sẽ tự động tạo bảng token_transactions
 
+// ServicePricing lưu giá các service API
+type ServicePricing struct {
+	ID           uint      `json:"id" gorm:"primaryKey"`
+	ServiceName  string    `json:"service_name" gorm:"uniqueIndex"`
+	PricingType  string    `json:"pricing_type" gorm:"type:enum('per_minute','per_token','per_character')"`
+	PricePerUnit float64   `json:"price_per_unit" gorm:"type:decimal(10,6)"`
+	Currency     string    `json:"currency" gorm:"default:'USD'"`
+	Description  string    `json:"description"`
+	IsActive     bool      `json:"is_active" gorm:"default:true"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+func (ServicePricing) TableName() string {
+	return "service_pricings"
+}
+
+// PricingTier lưu thông tin các tier pricing
+type PricingTier struct {
+	ID                int       `json:"id" gorm:"primaryKey"`
+	Name              string    `json:"name" gorm:"uniqueIndex"`
+	BaseMarkup        float64   `json:"base_markup" gorm:"type:decimal(5,2)"`
+	MonthlyLimit      *int      `json:"monthly_limit"`
+	SubscriptionPrice float64   `json:"subscription_price" gorm:"type:decimal(10,2);default:0.00"`
+	IsActive          bool      `json:"is_active" gorm:"default:true"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// ServiceMarkup lưu markup cho từng service
+type ServiceMarkup struct {
+	ServiceName   string    `json:"service_name" gorm:"primaryKey"`
+	BaseMarkup    float64   `json:"base_markup" gorm:"type:decimal(5,2)"`
+	PremiumMarkup float64   `json:"premium_markup" gorm:"type:decimal(5,2);default:0.00"`
+	Description   string    `json:"description"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// UserCredits lưu credit của user (USD)
+type UserCredits struct {
+	ID            uint      `json:"id" gorm:"primaryKey"`
+	UserID        uint      `json:"user_id" gorm:"uniqueIndex"`
+	TotalCredits  float64   `json:"total_credits" gorm:"type:decimal(10,2);default:0.00"`
+	UsedCredits   float64   `json:"used_credits" gorm:"type:decimal(10,2);default:0.00"`
+	LockedCredits float64   `json:"locked_credits" gorm:"type:decimal(10,2);default:0.00"`
+	TierID        int       `json:"tier_id" gorm:"default:1"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// CreditTransaction lưu lịch sử giao dịch credit
+type CreditTransaction struct {
+	ID                uint      `json:"id" gorm:"primaryKey"`
+	UserID            uint      `json:"user_id" gorm:"index"`
+	TransactionType   string    `json:"transaction_type" gorm:"type:enum('add','deduct','lock','unlock','refund')"`
+	Amount            float64   `json:"amount" gorm:"type:decimal(10,2)"`
+	BaseAmount        float64   `json:"base_amount" gorm:"type:decimal(10,6);default:0.00"`
+	Service           string    `json:"service"`
+	Description       string    `json:"description"`
+	PricingType       string    `json:"pricing_type"`
+	UnitsUsed         float64   `json:"units_used" gorm:"type:decimal(10,6);default:0.00"`
+	VideoID           *uint     `json:"video_id"`
+	TransactionStatus string    `json:"transaction_status" gorm:"type:enum('pending','completed','failed','refunded');default:'completed'"`
+	ReferenceID       string    `json:"reference_id"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// UserTokens lưu số dư token của user (backward compatibility)
 type UserTokens struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
 	UserID      uint      `json:"user_id" gorm:"index"`
@@ -100,13 +170,19 @@ type UserTokens struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-type TokenTransaction struct {
-	ID          uint      `json:"id" gorm:"primaryKey"`
-	UserID      uint      `json:"user_id" gorm:"index"`
-	Type        string    `json:"type"` // "add" hoặc "deduct"
-	Amount      int       `json:"amount"`
-	Description string    `json:"description"`
-	Service     string    `json:"service"`
-	VideoID     *uint     `json:"video_id"`
-	CreatedAt   time.Time `json:"created_at"`
+// UserProcessStatus theo dõi trạng thái process của user để tránh spam
+type UserProcessStatus struct {
+	ID          uint       `json:"id" gorm:"primaryKey"`
+	UserID      uint       `json:"user_id" gorm:"index"`
+	Status      string     `json:"status" gorm:"type:enum('processing','completed','failed','cancelled');default:'processing'"`
+	ProcessType string     `json:"process_type" gorm:"type:enum('process','process-video','process-voice','process-background')"`
+	StartedAt   time.Time  `json:"started_at" gorm:"default:CURRENT_TIMESTAMP"`
+	CompletedAt *time.Time `json:"completed_at"`
+	VideoID     *uint      `json:"video_id"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+func (UserProcessStatus) TableName() string {
+	return "user_process_status"
 }

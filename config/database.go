@@ -99,6 +99,7 @@ type ServicePricing struct {
 	PricePerUnit float64   `json:"price_per_unit" gorm:"type:decimal(10,6)"`
 	Currency     string    `json:"currency" gorm:"default:'USD'"`
 	Description  string    `json:"description"`
+	ModelAPIName string    `json:"model_api_name" gorm:"type:varchar(100);default:null"`
 	IsActive     bool      `json:"is_active" gorm:"default:true"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -185,4 +186,19 @@ type UserProcessStatus struct {
 
 func (UserProcessStatus) TableName() string {
 	return "user_process_status"
+}
+
+// ServiceConfig lưu cấu hình dịch vụ cho từng nghiệp vụ
+type ServiceConfig struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	ServiceType string    `json:"service_type" gorm:"type:varchar(64);index:idx_service_type_active"`
+	ServiceName string    `json:"service_name" gorm:"type:varchar(64)"`
+	IsActive    bool      `json:"is_active" gorm:"default:true;index:idx_service_type_active"`
+	ConfigJSON  string    `json:"config_json" gorm:"type:text"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func (ServiceConfig) TableName() string {
+	return "service_config"
 }

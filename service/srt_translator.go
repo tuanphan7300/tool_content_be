@@ -29,15 +29,16 @@ Kiểm tra cuối cùng: Trước khi xuất kết quả, hãy tự kiểm tra l
 File SRT gốc:
 ` + string(srtContent)
 
-	// Call Gemini API
-	translatedContent, err := GenerateWithGemini(prompt, apiKey)
+	// Dùng model mặc định nếu không truyền vào
+	modelName := "gemini-1.5-flash-latest"
+	translatedContent, err := GenerateWithGemini(prompt, apiKey, modelName)
 	if err != nil {
 		return "", fmt.Errorf("failed to translate SRT with Gemini: %v", err)
 	}
 
 	// Clean up the response - remove any extra text that might be added by Gemini
 	translatedContent = strings.TrimSpace(translatedContent)
-	
+
 	// If Gemini added any prefix or explanation, try to extract just the SRT content
 	if strings.Contains(translatedContent, "1\n") {
 		// Find the start of the SRT content
@@ -53,7 +54,7 @@ File SRT gốc:
 // CreateSRTFromSegments creates an SRT file from segments and then translates it
 func CreateSRTFromSegments(segments []Segment, outputPath string) error {
 	var srtBuilder strings.Builder
-	
+
 	for i, segment := range segments {
 		// SRT format: index, start --> end, text
 		srtBuilder.WriteString(fmt.Sprintf("%d\n", i+1))
@@ -115,7 +116,7 @@ func ParseSRTToSegments(srtFilePath string) ([]Segment, error) {
 
 	var segments []Segment
 	lines := strings.Split(string(content), "\n")
-	
+
 	i := 0
 	for i < len(lines) {
 		// Skip empty lines
@@ -180,7 +181,6 @@ func ParseSRTToSegments(srtFilePath string) ([]Segment, error) {
 
 // EstimateGeminiTokens estimates the number of tokens that will be used for SRT translation
 func EstimateGeminiTokens(srtContent string, apiKey string) (int, error) {
-	// Create the prompt that will be sent to Gemini
 	prompt := `Hãy dịch file SRT từ tiếng Trung sang tiếng Việt.
 
 TUÂN THỦ NGHIÊM NGẶT CÁC QUY TẮC SAU:
@@ -193,16 +193,56 @@ Kiểm tra cuối cùng: Trước khi xuất kết quả, hãy tự kiểm tra l
 
 File SRT gốc:
 ` + srtContent
-
-	// Count tokens using Gemini API
-	tokens, err := CountTokens(prompt, apiKey)
+	modelName := "gemini-1.5-flash-latest"
+	tokens, err := CountTokens(prompt, apiKey, modelName)
 	if err != nil {
-		// Fallback to character-based calculation
 		tokens = int(float64(len(srtContent))/62.5 + 0.9999)
 		if tokens < 1 {
 			tokens = 1
 		}
 	}
-
 	return tokens, nil
-} 
+}
+
+// TranslateSRTFileWithModel dịch SRT với modelName động
+func TranslateSRTFileWithModel(srtFilePath, apiKey, modelName string) (string, error) {
+	// Read the original SRT file
+	srtContent, err := os.ReadFile(srtFilePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read SRT file: %v", err)
+	}
+
+	// Create the prompt for Gemini
+	prompt := `Hãy dịch file SRT từ tiếng Trung sang tiếng Việt.
+
+TUÂN THỦ NGHIÊM NGẶT CÁC QUY TẮC SAU:
+
+QUY TẮC QUAN TRỌNG NHẤT: Giữ nguyên 100% số thứ tự và dòng thời gian (timestamps) từ file gốc. TUYỆT ĐỐI KHÔNG được thay đổi, làm tròn, hay "sửa lỗi" thời gian. Dòng thời gian phải được sao chép y hệt.
+
+Về nội dung: Dịch tự nhiên, truyền cảm, phù hợp với văn nói. Rút gọn các câu quá dài để khớp với thời gian hiển thị.
+
+Kiểm tra cuối cùng: Trước khi xuất kết quả, hãy tự kiểm tra lại để chắc chắn không có dòng thời gian nào bị sai lệch.
+
+File SRT gốc:
+` + string(srtContent)
+
+	// Call Gemini API
+	translatedContent, err := GenerateWithGemini(prompt, apiKey, modelName)
+	if err != nil {
+		return "", fmt.Errorf("failed to translate SRT with Gemini: %v", err)
+	}
+
+	// Clean up the response - remove any extra text that might be added by Gemini
+	translatedContent = strings.TrimSpace(translatedContent)
+
+	// If Gemini added any prefix or explanation, try to extract just the SRT content
+	if strings.Contains(translatedContent, "1\n") {
+		// Find the start of the SRT content
+		startIndex := strings.Index(translatedContent, "1\n")
+		if startIndex != -1 {
+			translatedContent = translatedContent[startIndex:]
+		}
+	}
+
+	return translatedContent, nil
+}

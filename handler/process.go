@@ -100,7 +100,15 @@ func ProcessHandler(c *gin.Context) {
 	if geminiTokens < 1 {
 		geminiTokens = 1
 	}
-	translatedSegments, err := service.TranslateSegmentsWithGemini(string(jsonData), geminiKey)
+	// Lấy service_name và model_api_name cho nghiệp vụ dịch SRT từ bảng service_config
+	pricingService := service.NewPricingService()
+	_, srtModelAPIName, err := pricingService.GetActiveServiceForType("srt_translation")
+	if err != nil {
+		log.Warnf("Error getting active SRT translation service: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get active SRT translation service"})
+		return
+	}
+	translatedSegments, err := service.TranslateSegmentsWithGemini(string(jsonData), geminiKey, srtModelAPIName)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gemini error"})
 		return
@@ -311,8 +319,15 @@ func ProcessVideoHandler(c *gin.Context) {
 		return
 	}
 
+	// Lấy service_name và model_api_name cho nghiệp vụ dịch SRT từ bảng service_config
+	_, srtModelAPIName, err := pricingService.GetActiveServiceForType("srt_translation")
+	if err != nil {
+		log.Printf("Error getting active SRT translation service: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get active SRT translation service"})
+		return
+	}
 	// Translate the original SRT file using Gemini
-	translatedSRTContent, err := service.TranslateSRTFile(originalSRTPath, geminiKey)
+	translatedSRTContent, err := service.TranslateSRTFileWithModel(originalSRTPath, geminiKey, srtModelAPIName)
 	if err != nil {
 		log.Printf("Error translating SRT file: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to translate SRT: %v", err)})
@@ -328,7 +343,7 @@ func ProcessVideoHandler(c *gin.Context) {
 	}
 
 	// Tính chi phí Gemini theo số ký tự thực tế
-	geminiCost, geminiTokens, err := pricingService.CalculateGeminiCost(originalSRTContent)
+	geminiCost, geminiTokens, _, err := pricingService.CalculateGeminiCost(originalSRTContent, srtModelAPIName)
 	if err != nil {
 		log.Printf("Error calculating Gemini cost: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to calculate Gemini cost"})
@@ -337,7 +352,7 @@ func ProcessVideoHandler(c *gin.Context) {
 
 	log.Printf("Gemini cost: $%.6f for %d tokens", geminiCost, geminiTokens)
 
-	if err := creditService.DeductCredits(userID, geminiCost, "gemini", "Gemini dịch SRT", &captionHistory.ID, "per_token", float64(geminiTokens)); err != nil {
+	if err := creditService.DeductCredits(userID, geminiCost, srtModelAPIName, "Gemini dịch SRT", &captionHistory.ID, "per_token", float64(geminiTokens)); err != nil {
 		log.Printf("[BUG] DeductCredits gemini: userID=%d", userID)
 		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ credit cho Gemini"})
 		return

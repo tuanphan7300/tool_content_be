@@ -29,22 +29,19 @@ func (s *PricingService) CalculateWhisperCost(durationMinutes float64) (float64,
 	return cost, nil
 }
 
-// CalculateGeminiCost tính chi phí Gemini theo số token thực tế
-func (s *PricingService) CalculateGeminiCost(text string) (float64, int, error) {
-	pricing, err := s.getServicePricing("gemini_1.5_flash")
+// CalculateGeminiCost tính chi phí Gemini theo số token thực tế, trả về cả model_api_name
+func (s *PricingService) CalculateGeminiCost(text string, serviceName string) (float64, int, string, error) {
+	pricing, err := s.getServicePricing(serviceName)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, "", err
 	}
-
-	// Gemini 1.5 Flash: $0.075 per 1M tokens
-	// 1 token ≈ 4 ký tự (theo tài liệu chính thức)
+	modelAPIName := pricing.ModelAPIName
 	tokens := len([]rune(text)) / 4
 	if tokens < 1 {
 		tokens = 1
 	}
-
 	cost := float64(tokens) * pricing.PricePerUnit
-	return cost, tokens, nil
+	return cost, tokens, modelAPIName, nil
 }
 
 // CalculateTTSCost tính chi phí TTS theo số ký tự
@@ -306,11 +303,11 @@ func (s *PricingService) EstimateProcessVideoCost(durationMinutes float64, trans
 	estimates["whisper"] = whisperCost
 
 	// Gemini cost (dịch SRT)
-	geminiCost, _, err := s.CalculateGeminiCost(strings.Repeat("a", srtLength))
+	gemiCost, _, _, err := s.CalculateGeminiCost(strings.Repeat("a", srtLength), "gemini_1.5_flash")
 	if err != nil {
 		return nil, err
 	}
-	estimates["gemini"] = geminiCost
+	estimates["gemini"] = gemiCost
 
 	// TTS cost (sử dụng Wavenet cho chất lượng tốt)
 	ttsCost, err := s.CalculateTTSCost(strings.Repeat("a", transcriptLength), true)
@@ -320,7 +317,7 @@ func (s *PricingService) EstimateProcessVideoCost(durationMinutes float64, trans
 	estimates["tts"] = ttsCost
 
 	// Total cost
-	total := whisperCost + geminiCost + ttsCost
+	total := whisperCost + gemiCost + ttsCost
 	estimates["total"] = total
 
 	return estimates, nil
@@ -343,16 +340,16 @@ func (s *PricingService) EstimateProcessVideoCostWithMarkup(durationMinutes floa
 	estimates["whisper_base"] = whisperCost
 
 	// Gemini cost (dịch SRT)
-	geminiCost, _, err := s.CalculateGeminiCost(strings.Repeat("a", srtLength))
+	gemiCost, _, _, err := s.CalculateGeminiCost(strings.Repeat("a", srtLength), "gemini_1.5_flash")
 	if err != nil {
 		return nil, err
 	}
-	geminiPrice, err := s.CalculateUserPrice(geminiCost, "gemini", userID)
+	geminiPrice, err := s.CalculateUserPrice(gemiCost, "gemini", userID)
 	if err != nil {
 		return nil, err
 	}
 	estimates["gemini"] = geminiPrice
-	estimates["gemini_base"] = geminiCost
+	estimates["gemini_base"] = gemiCost
 
 	// TTS cost (sử dụng Wavenet cho chất lượng tốt)
 	ttsCost, err := s.CalculateTTSCost(strings.Repeat("a", transcriptLength), true)
@@ -367,7 +364,7 @@ func (s *PricingService) EstimateProcessVideoCostWithMarkup(durationMinutes floa
 	estimates["tts_base"] = ttsCost
 
 	// Total cost
-	totalBase := whisperCost + geminiCost + ttsCost
+	totalBase := whisperCost + gemiCost + ttsCost
 	totalPrice := whisperPrice + geminiPrice + ttsPrice
 
 	estimates["total_base"] = totalBase
@@ -377,4 +374,43 @@ func (s *PricingService) EstimateProcessVideoCostWithMarkup(durationMinutes floa
 
 	return estimates, nil
 }
- 
+
+// GetGeminiModelAPIName lấy model_api_name từ DB theo service_name
+func (s *PricingService) GetGeminiModelAPIName(serviceName string) (string, error) {
+	var pricing config.ServicePricing
+	err := config.Db.Where("service_name = ? AND is_active = ?", serviceName, true).First(&pricing).Error
+	if err != nil {
+		return "", fmt.Errorf("service pricing not found for %s: %v", serviceName, err)
+	}
+	if pricing.ModelAPIName != "" {
+		return pricing.ModelAPIName, nil
+	}
+	return "", fmt.Errorf("model_api_name not set for %s", serviceName)
+}
+
+// GetActiveGeminiServiceName trả về service_name và model_api_name của Gemini model đang active
+func (s *PricingService) GetActiveGeminiServiceName() (string, string, error) {
+	var pricing config.ServicePricing
+	err := config.Db.Where("service_name LIKE ? AND is_active = ?", "gemini_%", true).Order("id ASC").First(&pricing).Error
+	if err != nil {
+		return "", "", fmt.Errorf("no active Gemini model found: %v", err)
+	}
+	return pricing.ServiceName, pricing.ModelAPIName, nil
+}
+
+// GetActiveServiceForType trả về service_name và model_api_name của dịch vụ active cho một service_type
+func (s *PricingService) GetActiveServiceForType(serviceType string) (string, string, error) {
+	var result struct {
+		ServiceName  string
+		ModelAPIName string
+	}
+	err := config.Db.Table("service_config as sc").
+		Select("sc.service_name, sp.model_api_name").
+		Joins("JOIN service_pricings sp ON sc.service_name = sp.service_name").
+		Where("sc.service_type = ? AND sc.is_active = 1", serviceType).
+		First(&result).Error
+	if err != nil {
+		return "", "", fmt.Errorf("no active service for type %s: %v", serviceType, err)
+	}
+	return result.ServiceName, result.ModelAPIName, nil
+}

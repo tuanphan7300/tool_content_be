@@ -262,7 +262,7 @@ func ConvertSRTToSpeech(srtContent string, videoDir string, speakingRate float64
 		// Create delayed segment using FFmpeg with volume boost
 		cmd := exec.Command("ffmpeg",
 			"-i", segmentFile,
-			"-af", fmt.Sprintf("volume=3.0,adelay=%d|%d", int(entries[i].Start*1000), int(entries[i].Start*1000)),
+			"-af", fmt.Sprintf("volume=2.0,adelay=%d|%d", int(entries[i].Start*1000), int(entries[i].Start*1000)),
 			"-ar", "44100",
 			"-ac", "2",
 			"-acodec", "pcm_s16le",
@@ -349,7 +349,7 @@ func processSegmentsProgressive(segmentFiles []string, entries []SRTEntry, baseA
 
 			cmd := exec.Command("ffmpeg",
 				"-i", segmentFile,
-				"-af", fmt.Sprintf("volume=3.0,adelay=%d|%d", int(batchEntries[j].Start*1000), int(batchEntries[j].Start*1000)),
+				"-af", fmt.Sprintf("volume=2.0,adelay=%d|%d", int(batchEntries[j].Start*1000), int(batchEntries[j].Start*1000)),
 				"-ar", "44100",
 				"-ac", "2",
 				"-acodec", "pcm_s16le",
@@ -455,7 +455,7 @@ func processSegmentsInBatches(segmentFiles []string, entries []SRTEntry, baseAud
 
 			cmd := exec.Command("ffmpeg",
 				"-i", segmentFile,
-				"-af", fmt.Sprintf("volume=3.0,adelay=%d|%d", int(batchEntries[j].Start*1000), int(batchEntries[j].Start*1000)),
+				"-af", fmt.Sprintf("volume=2.0,adelay=%d|%d", int(batchEntries[j].Start*1000), int(batchEntries[j].Start*1000)),
 				"-ar", "44100",
 				"-ac", "2",
 				"-acodec", "pcm_s16le",
@@ -551,7 +551,7 @@ func processSegmentsConcat(segmentFiles []string, entries []SRTEntry, baseAudioF
 		// Create delayed segment using FFmpeg with volume boost
 		cmd := exec.Command("ffmpeg",
 			"-i", segmentFile,
-			"-af", fmt.Sprintf("volume=3.0,adelay=%d|%d", int(entries[i].Start*1000), int(entries[i].Start*1000)),
+			"-af", fmt.Sprintf("volume=2.0,adelay=%d|%d", int(entries[i].Start*1000), int(entries[i].Start*1000)),
 			"-ar", "44100",
 			"-ac", "2",
 			"-acodec", "pcm_s16le",
@@ -673,7 +673,7 @@ func processBatchTTS(client *texttospeech.Client, ctx context.Context, entries [
 		wavBatchFile := filepath.Join(tempDir, fmt.Sprintf("batch_%d.wav", i/batchSize))
 		cmd := exec.Command("ffmpeg",
 			"-i", batchFile,
-			"-af", "volume=3.0",
+			"-af", "volume=2.0",
 			"-ar", "44100",
 			"-ac", "2",
 			"-acodec", "pcm_s16le",
@@ -772,7 +772,7 @@ func processIndividualTTS(client *texttospeech.Client, ctx context.Context, entr
 		wavSegmentFile := filepath.Join(tempDir, fmt.Sprintf("segment_%d.wav", i))
 		cmd := exec.Command("ffmpeg",
 			"-i", segmentFile,
-			"-af", "volume=3.0",
+			"-af", "volume=2.0",
 			"-ar", "44100",
 			"-ac", "2",
 			"-acodec", "pcm_s16le",

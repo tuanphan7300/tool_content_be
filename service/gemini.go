@@ -40,9 +40,9 @@ type CountTokensResponse struct {
 }
 
 // CountTokens tính toán số token sẽ được sử dụng cho một prompt
-func CountTokens(prompt, apiKey string) (int, error) {
+func CountTokens(prompt, apiKey, modelName string) (int, error) {
 	// Endpoint của Gemini API để đếm token
-	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:countTokens"
+	url := "https://generativelanguage.googleapis.com/v1beta/models/" + modelName + ":countTokens"
 
 	// Tạo payload cho request
 	requestBody := GeminiRequest{
@@ -99,9 +99,9 @@ func CountTokens(prompt, apiKey string) (int, error) {
 }
 
 // GenerateWithGemini gửi text tới Gemini API và nhận phản hồi (ví dụ: caption, dịch, hoặc phân tích)
-func GenerateWithGemini(prompt, apiKey string) (string, error) {
+func GenerateWithGemini(prompt, apiKey, modelName string) (string, error) {
 	// Endpoint của Gemini API (Google AI API)
-	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
+	url := "https://generativelanguage.googleapis.com/v1beta/models/" + modelName + ":generateContent"
 
 	// Tạo payload cho request
 	requestBody := GeminiRequest{
@@ -164,7 +164,7 @@ func GenerateWithGemini(prompt, apiKey string) (string, error) {
 	return result, nil
 }
 
-func TranslateSegmentsWithGemini(segmentsJSON string, apiKey string) ([]Segment, error) {
+func TranslateSegmentsWithGemini(segmentsJSON string, apiKey string, modelName string) ([]Segment, error) {
 	// Parse JSON segments
 	var segments []Segment
 	err := json.Unmarshal([]byte(segmentsJSON), &segments)
@@ -187,7 +187,7 @@ func TranslateSegmentsWithGemini(segmentsJSON string, apiKey string) ([]Segment,
 	}
 
 	// Gọi Gemini API một lần duy nhất
-	translatedText, err := GenerateWithGemini(promptBuilder.String(), apiKey)
+	translatedText, err := GenerateWithGemini(promptBuilder.String(), apiKey, modelName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to translate segments: %v", err)
 	}

@@ -194,14 +194,16 @@ func (ws *WorkerService) runDemucs(ctx context.Context, job *AudioProcessingJob)
 	timestamp := time.Now().UnixNano()
 	uniquePrefix := fmt.Sprintf("%d_%s", timestamp, fileNameWithoutExt)
 
+	// Tìm đường dẫn Demucs
+	demucsPath := GetDemucsPath()
+	if demucsPath == "" {
+		return "", fmt.Errorf("demucs not found. Please install demucs: pip3 install -U demucs")
+	}
+
+	log.Printf("Using Demucs at: %s", demucsPath)
+
 	// Chạy Demucs với context timeout
-	//cmd := exec.CommandContext(ctx, "/Users/phantuan/Library/Python/3.9/bin/demucs",
-	//	"-n", "htdemucs",
-	//	"--two-stems", "vocals",
-	//	"-o", outputDir,
-	//	job.AudioPath,
-	//)
-	cmd := exec.CommandContext(ctx, "/Users/phantuan/Library/Frameworks/Python.framework/Versions/3.11/bin/demucs",
+	cmd := exec.CommandContext(ctx, demucsPath,
 		"-n", "htdemucs",
 		"--two-stems", "vocals",
 		"-o", outputDir,

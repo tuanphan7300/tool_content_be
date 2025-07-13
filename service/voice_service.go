@@ -102,14 +102,16 @@ func separateAudio(audioPath string, fileName string, stemType string, videoDir 
 		log.Printf("Input audio duration: %s seconds", string(durationOutput))
 	}
 
+	// Tìm đường dẫn Demucs
+	demucsPath := GetDemucsPath()
+	if demucsPath == "" {
+		return "", fmt.Errorf("demucs not found. Please install demucs: pip3 install -U demucs")
+	}
+
+	log.Printf("Using Demucs at: %s", demucsPath)
+
 	// Use Demucs to separate audio
-	//cmd := exec.Command("/Users/phantuan/Library/Python/3.9/bin/demucs",
-	//	"-n", "htdemucs",
-	//	"--two-stems", "vocals",
-	//	"-o", outputDir,
-	//	audioPath,
-	//)
-	cmd := exec.Command("/Users/phantuan/Library/Frameworks/Python.framework/Versions/3.11/bin/demucs",
+	cmd := exec.Command(demucsPath,
 		"-n", "htdemucs",
 		"--two-stems", "vocals",
 		"-o", outputDir,
@@ -184,7 +186,7 @@ func ExtractVocals(audioPath string, fileName string, videoDir string) (string, 
 // MergeVideoWithAudio merges a video with background music and TTS audio
 func MergeVideoWithAudio(videoPath, backgroundMusicPath, ttsPath, videoDir string, backgroundVolume, ttsVolume float64) (string, error) {
 	log.Printf("MergeVideoWithAudio called with volumes - background: %.2f, tts: %.2f", backgroundVolume, ttsVolume)
-	
+
 	// Create output directory if it doesn't exist
 	outputDir := filepath.Join(videoDir, "merged")
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -228,7 +230,7 @@ func MergeVideoWithAudio(videoPath, backgroundMusicPath, ttsPath, videoDir strin
 		"[1:a]volume=%.2f,apad=whole_dur=%s[bg];[2:a]volume=%.2f[tts];[bg][tts]amix=inputs=2:duration=longest:normalize=0[audio]",
 		backgroundVolume, strings.TrimSpace(string(videoDurationOutput)), ttsVolume,
 	)
-	
+
 	log.Printf("FFmpeg filter complex: %s", filterComplex)
 
 	// Merge video with adjusted audio - sử dụng -shortest để đảm bảo đồng bộ
@@ -242,10 +244,10 @@ func MergeVideoWithAudio(videoPath, backgroundMusicPath, ttsPath, videoDir strin
 		"-c:v", "copy", // Copy video codec
 		"-c:a", "aac", // Use AAC for audio
 		"-b:a", "192k", // Set audio bitrate
-		"-shortest", // End when shortest input ends - quan trọng cho đồng bộ
+		"-shortest",                       // End when shortest input ends - quan trọng cho đồng bộ
 		"-avoid_negative_ts", "make_zero", // Tránh timestamp âm
 		"-fflags", "+genpts", // Generate presentation timestamps
-		"-y",        // Overwrite output file
+		"-y", // Overwrite output file
 		outputPath,
 	)
 
@@ -273,3 +275,5 @@ func MergeVideoWithAudio(videoPath, backgroundMusicPath, ttsPath, videoDir strin
 
 	return outputPath, nil
 }
+
+

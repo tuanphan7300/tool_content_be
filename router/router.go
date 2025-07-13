@@ -24,6 +24,8 @@ func SetupRoutes(r *gin.Engine) {
 		protected.GET("/user/profile", handler.GetUserProfileHandler)
 		protected.POST("/upload", handler.UploadHandler)
 		protected.POST("/process", handler.ProcessHandler)
+		protected.POST("/generate-caption", handler.GenerateCaptionHandler)
+		protected.POST("/tiktok-optimize", handler.TikTokOptimizerHandler)
 		protected.GET("/caption/:id", handler.CaptionHandler)
 		protected.GET("/suggest/:id", handler.SuggestHandler)
 		protected.POST("/save-history", handler.SaveHistory)

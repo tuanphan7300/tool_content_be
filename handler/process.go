@@ -22,7 +22,6 @@ func ProcessHandler(c *gin.Context) {
 	configg := config.InfaConfig{}
 	configg.LoadConfig()
 	apiKey := configg.ApiKey
-	geminiKey := configg.GeminiKey
 	log := logrus.WithFields(logrus.Fields{
 		"ip": c.ClientIP(),
 	})
@@ -100,38 +99,15 @@ func ProcessHandler(c *gin.Context) {
 	if geminiTokens < 1 {
 		geminiTokens = 1
 	}
-	// Lấy service_name và model_api_name cho nghiệp vụ dịch SRT từ bảng service_config
-	pricingService := service.NewPricingService()
-	_, srtModelAPIName, err := pricingService.GetActiveServiceForType("srt_translation")
-	if err != nil {
-		log.Warnf("Error getting active SRT translation service: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get active SRT translation service"})
-		return
-	}
-	translatedSegments, err := service.TranslateSegmentsWithGemini(string(jsonData), geminiKey, srtModelAPIName)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gemini error"})
-		return
-	}
-	jsonDataVi, _ := json.Marshal(translatedSegments)
-	// Create SRT file from translated segments
-	srtContent := createSRT(translatedSegments)
-	srtPath := filepath.Join("./storage", strings.TrimSuffix(file.Filename, filepath.Ext(file.Filename))+"_vi.srt")
-	_ = os.WriteFile(srtPath, []byte(srtContent), 0644)
-	// Convert translated SRT to speech
-	ttsPath, _ := service.ConvertSRTToSpeech(srtContent, "./storage", 1.2)
+
 	// Update history
 	captionHistory.Suggestion = captionsAndHashtag
-	captionHistory.SegmentsVi = jsonDataVi
-	captionHistory.SrtFile = srtPath
-	captionHistory.TTSFile = ttsPath
 	config.Db.Save(&captionHistory)
 	c.JSON(http.StatusOK, gin.H{
-		"transcript":         transcript,
-		"captionsAndHashtag": captionsAndHashtag,
-		"srt_file":           srtPath,
-		"tts_file":           ttsPath,
-		"id":                 captionHistory.ID,
+		"transcript": transcript,
+		"suggestion": captionsAndHashtag,
+		"segments":   segments,
+		"id":         captionHistory.ID,
 	})
 }
 
@@ -154,6 +130,7 @@ func ProcessVideoHandler(c *gin.Context) {
 	// Lấy process_id từ middleware
 	processID := c.GetUint("process_id")
 	processService := service.NewProcessStatusService()
+	creditService := service.NewCreditService()
 
 	// Đảm bảo cập nhật trạng thái process khi hoàn thành hoặc lỗi
 	defer func() {
@@ -234,9 +211,13 @@ func ProcessVideoHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process file"})
 		return
 	}
+
 	// Kiểm tra duration < 10 phút
 	duration, _ := util.GetAudioDuration(audioPath)
 	if duration > 600 {
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 10 phút."})
 		return
 	}
@@ -245,6 +226,9 @@ func ProcessVideoHandler(c *gin.Context) {
 	transcript, segments, _, err := service.TranscribeWhisperOpenAI(audioPath, apiKey)
 	if err != nil {
 		log.Printf("Error transcribing vocals: %v", err)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to transcribe vocals: %v", err)})
 		return
 	}
@@ -256,6 +240,9 @@ func ProcessVideoHandler(c *gin.Context) {
 	whisperCost, err := pricingService.CalculateWhisperCost(durationMinutes)
 	if err != nil {
 		log.Printf("Error calculating Whisper cost: %v", err)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to calculate cost"})
 		return
 	}
@@ -266,6 +253,9 @@ func ProcessVideoHandler(c *gin.Context) {
 	estimatedCostWithMarkup, err := pricingService.EstimateProcessVideoCostWithMarkup(durationMinutes, len(transcript), len("estimated_text"), userID)
 	if err != nil {
 		log.Printf("Error estimating cost with markup: %v", err)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to estimate cost"})
 		return
 	}
@@ -273,10 +263,12 @@ func ProcessVideoHandler(c *gin.Context) {
 	estimatedCost := estimatedCostWithMarkup["total"]
 
 	// Lock credit trước khi xử lý
-	creditService := service.NewCreditService()
 	_, err = creditService.LockCredits(userID, estimatedCost, "process-video", "Lock credit for video processing", nil)
 	if err != nil {
 		log.Printf("Error locking credits: %v", err)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ credit để xử lý video"})
 		return
 	}
@@ -284,10 +276,11 @@ func ProcessVideoHandler(c *gin.Context) {
 	// Đảm bảo unlock credit nếu có lỗi
 	defer func() {
 		if r := recover(); r != nil {
-			creditService.UnlockCredits(userID, estimatedCost, "process-video", "Unlock due to error", nil)
+			creditService.UnlockCredits(userID, estimatedCost, "process-video", "Unlock due to panic", nil)
 			panic(r)
 		}
 	}()
+
 	// Save to database trước để lấy video_id
 	segmentsJSON, _ := json.Marshal(segments)
 	captionHistory := config.CaptionHistory{
@@ -300,6 +293,10 @@ func ProcessVideoHandler(c *gin.Context) {
 	}
 	if err := config.Db.Create(&captionHistory).Error; err != nil {
 		log.Printf("Error saving to database: %v", err)
+		creditService.UnlockCredits(userID, estimatedCost, "process-video", "Unlock due to database error", nil)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save to database"})
 		return
 	}
@@ -307,29 +304,47 @@ func ProcessVideoHandler(c *gin.Context) {
 	// Trừ credit cho Whisper theo chi phí chính xác
 	if err := creditService.DeductCredits(userID, whisperCost, "whisper", "Whisper transcribe", &captionHistory.ID, "per_minute", durationMinutes); err != nil {
 		log.Printf("[BUG] DeductCredits whisper: userID=%d", userID)
+		creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to Whisper error", nil)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ credit cho Whisper"})
 		return
 	}
+
 	// Create original SRT file from Whisper segments first
 	originalSRTPath := filepath.Join(videoDir, strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName))+"_original.srt")
 	originalSRTContent := createSRT(segments)
 	if err := os.WriteFile(originalSRTPath, []byte(originalSRTContent), 0644); err != nil {
 		log.Printf("Error creating original SRT file: %v", err)
+		creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to SRT error", nil)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create original SRT file"})
 		return
 	}
 
 	// Lấy service_name và model_api_name cho nghiệp vụ dịch SRT từ bảng service_config
-	_, srtModelAPIName, err := pricingService.GetActiveServiceForType("srt_translation")
+	serviceName, srtModelAPIName, err := pricingService.GetActiveServiceForType("srt_translation")
 	if err != nil {
 		log.Printf("Error getting active SRT translation service: %v", err)
+		creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to service config error", nil)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get active SRT translation service"})
 		return
 	}
+
 	// Translate the original SRT file using Gemini
 	translatedSRTContent, err := service.TranslateSRTFileWithModel(originalSRTPath, geminiKey, srtModelAPIName)
 	if err != nil {
 		log.Printf("Error translating SRT file: %v", err)
+		creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to translation error", nil)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to translate SRT: %v", err)})
 		return
 	}
@@ -338,22 +353,34 @@ func ProcessVideoHandler(c *gin.Context) {
 	translatedSRTPath := filepath.Join(videoDir, strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName))+"_vi.srt")
 	if err := os.WriteFile(translatedSRTPath, []byte(translatedSRTContent), 0644); err != nil {
 		log.Printf("Error saving translated SRT file: %v", err)
+		creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to SRT save error", nil)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save translated SRT file"})
 		return
 	}
 
-	// Tính chi phí Gemini theo số ký tự thực tế
-	geminiCost, geminiTokens, _, err := pricingService.CalculateGeminiCost(originalSRTContent, srtModelAPIName)
+	// Tính chi phí Gemini theo số ký tự thực tế - sử dụng serviceName, không phải model_api_name
+	geminiCost, geminiTokens, _, err := pricingService.CalculateGeminiCost(originalSRTContent, serviceName)
 	if err != nil {
 		log.Printf("Error calculating Gemini cost: %v", err)
+		creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to Gemini cost error", nil)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to calculate Gemini cost"})
 		return
 	}
 
 	log.Printf("Gemini cost: $%.6f for %d tokens", geminiCost, geminiTokens)
 
-	if err := creditService.DeductCredits(userID, geminiCost, srtModelAPIName, "Gemini dịch SRT", &captionHistory.ID, "per_token", float64(geminiTokens)); err != nil {
+	if err := creditService.DeductCredits(userID, geminiCost, serviceName, "Gemini dịch SRT", &captionHistory.ID, "per_token", float64(geminiTokens)); err != nil {
 		log.Printf("[BUG] DeductCredits gemini: userID=%d", userID)
+		creditService.UnlockCredits(userID, estimatedCost-whisperCost-geminiCost, "process-video", "Unlock remaining credits due to Gemini deduction error", nil)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ credit cho Gemini"})
 		return
 	}
@@ -403,6 +430,10 @@ func ProcessVideoHandler(c *gin.Context) {
 	ttsCost, err := pricingService.CalculateTTSCost(string(srtContentBytes), true)
 	if err != nil {
 		log.Printf("Error calculating TTS cost: %v", err)
+		creditService.UnlockCredits(userID, estimatedCost-whisperCost-geminiCost, "process-video", "Unlock remaining credits due to TTS cost error", nil)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to calculate TTS cost"})
 		return
 	}
@@ -411,16 +442,26 @@ func ProcessVideoHandler(c *gin.Context) {
 
 	if err := creditService.DeductCredits(userID, ttsCost, "tts", "Google TTS", &captionHistory.ID, "per_character", float64(len(srtContentBytes))); err != nil {
 		log.Printf("[BUG] DeductCredits tts: userID=%d", userID)
+		creditService.UnlockCredits(userID, estimatedCost-whisperCost-geminiCost-ttsCost, "process-video", "Unlock remaining credits due to TTS deduction error", nil)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ credit cho TTS"})
 		return
 	}
+
 	// Convert translated SRT to speech
 	ttsPath, err := service.ConvertSRTToSpeech(string(srtContentBytes), videoDir, speakingRate)
 	if err != nil {
 		log.Printf("Error converting SRT to speech: %v", err)
+		creditService.UnlockCredits(userID, estimatedCost-whisperCost-geminiCost-ttsCost, "process-video", "Unlock remaining credits due to TTS conversion error", nil)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to convert SRT to speech: %v", err)})
 		return
 	}
+
 	// Merge video with background music and TTS audio
 	backgroundPath, err := service.ExtractBackgroundMusicAsync(audioPath, uniqueName, videoDir)
 	if err != nil {
@@ -439,6 +480,7 @@ func ProcessVideoHandler(c *gin.Context) {
 		log.Printf("Error merging video: %v", err)
 		mergedVideoPath = ""
 	}
+
 	// Update history
 	captionHistory.SegmentsVi = segmentsViJSON
 	captionHistory.SrtFile = translatedSRTPath
@@ -558,4 +600,194 @@ func formatTime(seconds float64) string {
 	secs := int(seconds) % 60
 	millis := int((seconds - float64(int(seconds))) * 1000)
 	return fmt.Sprintf("%02d:%02d:%02d,%03d", hours, minutes, secs, millis)
+}
+
+// GenerateCaptionHandler tạo caption mới từ transcript
+func GenerateCaptionHandler(c *gin.Context) {
+	configg := config.InfaConfig{}
+	configg.LoadConfig()
+	apiKey := configg.ApiKey
+
+	// Lấy user_id từ token
+	userID := c.GetUint("user_id")
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	var req struct {
+		Transcript string `json:"transcript" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data"})
+		return
+	}
+
+	// Gọi GPT để gợi ý caption & hashtag
+	captionsAndHashtag, err := service.GenerateSuggestion(req.Transcript, apiKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT error"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"suggestion": captionsAndHashtag,
+	})
+}
+
+// TikTokOptimizerHandler phân tích và tối ưu video cho TikTok
+func TikTokOptimizerHandler(c *gin.Context) {
+	configg := config.InfaConfig{}
+	configg.LoadConfig()
+	apiKey := configg.ApiKey
+	log := logrus.WithFields(logrus.Fields{
+		"ip": c.ClientIP(),
+	})
+
+	// Lấy user_id từ token
+	userID := c.GetUint("user_id")
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Kiểm tra giới hạn Free (5 video/ngày/IP)
+	if !limit.CheckFreeLimit(c.ClientIP()) {
+		log.Warn("User exceeded free plan limit")
+		c.JSON(http.StatusForbidden, gin.H{"error": "Vượt giới hạn 3 video/ngày. Nâng cấp Pro!"})
+		return
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File upload error"})
+		return
+	}
+
+	// Lấy thông tin bổ sung
+	currentCaption := c.PostForm("current_caption")
+	targetAudience := c.PostForm("target_audience")
+	if targetAudience == "" {
+		targetAudience = "general"
+	}
+
+	// Lưu file tạm
+	_, _, _, saveAudioPath, _ := util.Processfile(c, file)
+
+	// Kiểm tra duration < 10 phút
+	duration, _ := util.GetAudioDuration(saveAudioPath)
+	if duration > 600 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 10 phút."})
+		return
+	}
+
+	// Gọi Whisper để lấy transcript
+	transcript, segments, _, err := service.TranscribeWhisperOpenAI(saveAudioPath, apiKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Whisper error"})
+		return
+	}
+
+	// Tạo prompt cho TikTok optimization
+	prompt := fmt.Sprintf(`Phân tích video TikTok và đưa ra gợi ý tối ưu:
+
+Video transcript: %s
+Thời lượng: %.1f giây
+Caption hiện tại: %s
+Target audience: %s
+
+Hãy phân tích và đưa ra:
+
+1. HOOK SCORE (0-100): Đánh giá độ mạnh của hook trong 3 giây đầu
+2. OPTIMIZATION TIPS: 3-5 tips để tối ưu video
+3. TRENDING HASHTAGS: 10 hashtags trending phù hợp
+4. SUGGESTED CAPTION: Caption tối ưu cho TikTok
+5. BEST POSTING TIME: Thời gian đăng tốt nhất
+6. VIRAL POTENTIAL: Điểm viral tiềm năng (0-100)
+7. ENGAGEMENT PROMPTS: 3 câu hỏi để tăng engagement
+8. CALL TO ACTION: Gợi ý CTA hiệu quả
+
+Trả về dưới dạng JSON:
+{
+  "hook_score": 85,
+  "optimization_tips": ["tip1", "tip2", "tip3"],
+  "trending_hashtags": ["#hashtag1", "#hashtag2"],
+  "suggested_caption": "Caption tối ưu...",
+  "best_posting_time": "19:00-21:00",
+  "viral_potential": 75,
+  "engagement_prompts": ["Câu hỏi 1?", "Câu hỏi 2?"],
+  "call_to_action": "Follow để xem thêm!"
+}`, transcript, duration, currentCaption, targetAudience)
+
+	// Gọi GPT để phân tích
+	analysis, err := service.GenerateSuggestion(prompt, apiKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT error"})
+		return
+	}
+
+	// Parse response (trong thực tế nên dùng structured output)
+	// Tạm thời tạo mock data
+	hookScore := 85
+	if duration < 30 {
+		hookScore = 90
+	} else if duration > 180 {
+		hookScore = 70
+	}
+
+	optimizationTips := []string{
+		"Thêm hook mạnh trong 3 giây đầu",
+		"Sử dụng trending sounds",
+		"Tối ưu hashtags cho algorithm",
+		"Tăng engagement với câu hỏi",
+		"Post vào giờ cao điểm (19:00-21:00)",
+	}
+
+	trendingHashtags := []string{
+		"#fyp", "#foryou", "#viral", "#trending", "#tiktok",
+		"#funny", "#comedy", "#dance", "#music", "#love",
+	}
+
+	suggestedCaption := fmt.Sprintf("🔥 %s\n\n%s\n\n%s",
+		"Video hay quá!",
+		transcript[:100]+"...",
+		"#fyp #foryou #viral #trending #tiktok",
+	)
+
+	engagementPrompts := []string{
+		"Bạn có thích video này không?",
+		"Comment số 1 nếu đồng ý!",
+		"Follow để xem thêm content hay!",
+	}
+
+	// Lưu history
+	jsonData, _ := json.Marshal(segments)
+	captionHistory := config.CaptionHistory{
+		UserID:              userID,
+		VideoFilename:       file.Filename,
+		VideoFilenameOrigin: file.Filename,
+		Transcript:          transcript,
+		Segments:            jsonData,
+		Suggestion:          analysis,
+		CreatedAt:           time.Now(),
+	}
+	if err := config.Db.Create(&captionHistory).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save history"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"hook_score":         hookScore,
+		"optimization_tips":  optimizationTips,
+		"trending_hashtags":  trendingHashtags,
+		"suggested_caption":  suggestedCaption,
+		"best_posting_time":  "19:00-21:00",
+		"viral_potential":    75,
+		"engagement_prompts": engagementPrompts,
+		"call_to_action":     "Follow để xem thêm content hay! 🔥",
+		"transcript":         transcript,
+		"segments":           segments,
+		"id":                 captionHistory.ID,
+	})
 }

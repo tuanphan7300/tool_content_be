@@ -3,6 +3,7 @@ package service
 import (
 	"creator-tool-backend/config"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -36,10 +37,24 @@ func (s *PricingService) CalculateGeminiCost(text string, serviceName string) (f
 		return 0, 0, "", err
 	}
 	modelAPIName := pricing.ModelAPIName
-	tokens := len([]rune(text)) / 4
+
+	// Tính tokens với giới hạn tối đa để tránh overflow
+	textLength := len([]rune(text))
+	tokens := textLength / 4
 	if tokens < 1 {
 		tokens = 1
 	}
+
+	// Log để debug
+	log.Printf("CalculateGeminiCost: text_length=%d, tokens=%d, service_name=%s", textLength, tokens, serviceName)
+
+	// Giới hạn tokens tối đa để tránh lỗi database
+	const maxTokens = 1000000 // 1 triệu tokens tối đa
+	if tokens > maxTokens {
+		log.Printf("WARNING: tokens %d exceeds max %d, capping to max", tokens, maxTokens)
+		tokens = maxTokens
+	}
+
 	cost := float64(tokens) * pricing.PricePerUnit
 	return cost, tokens, modelAPIName, nil
 }
@@ -302,8 +317,16 @@ func (s *PricingService) EstimateProcessVideoCost(durationMinutes float64, trans
 	}
 	estimates["whisper"] = whisperCost
 
-	// Gemini cost (dịch SRT)
-	gemiCost, _, _, err := s.CalculateGeminiCost(strings.Repeat("a", srtLength), "gemini_1.5_flash")
+	// Lấy service name cho Gemini từ database
+	geminiServiceName, _, err := s.GetActiveServiceForType("srt_translation")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active Gemini service: %v", err)
+	}
+
+	// Gemini cost (dịch SRT) - ước tính dựa trên prompt thực tế
+	// Prompt bao gồm: instructions + SRT content
+	promptLength := 500 + srtLength // 500 ký tự cho instructions
+	gemiCost, _, _, err := s.CalculateGeminiCost(strings.Repeat("a", promptLength), geminiServiceName)
 	if err != nil {
 		return nil, err
 	}
@@ -339,8 +362,16 @@ func (s *PricingService) EstimateProcessVideoCostWithMarkup(durationMinutes floa
 	estimates["whisper"] = whisperPrice
 	estimates["whisper_base"] = whisperCost
 
-	// Gemini cost (dịch SRT)
-	gemiCost, _, _, err := s.CalculateGeminiCost(strings.Repeat("a", srtLength), "gemini_1.5_flash")
+	// Lấy service name cho Gemini từ database
+	geminiServiceName, _, err := s.GetActiveServiceForType("srt_translation")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active Gemini service: %v", err)
+	}
+
+	// Gemini cost (dịch SRT) - ước tính dựa trên prompt thực tế
+	// Prompt bao gồm: instructions + SRT content
+	promptLength := 500 + srtLength // 500 ký tự cho instructions
+	gemiCost, _, _, err := s.CalculateGeminiCost(strings.Repeat("a", promptLength), geminiServiceName)
 	if err != nil {
 		return nil, err
 	}

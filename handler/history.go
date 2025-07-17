@@ -63,8 +63,13 @@ func SaveHistory(c *gin.Context) {
 
 func GetHistory(c *gin.Context) {
 	userID := c.GetUint("user_id")
+	processType := c.Query("process_type") // Lấy process_type từ query param
 	var histories []config.CaptionHistory
-	if err := config.Db.Where("user_id = ?", userID).Order("created_at desc").Find(&histories).Error; err != nil {
+	query := config.Db.Where("user_id = ?", userID)
+	if processType != "" {
+		query = query.Where("process_type = ?", processType)
+	}
+	if err := query.Order("created_at desc").Find(&histories).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

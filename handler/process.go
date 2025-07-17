@@ -80,6 +80,7 @@ func ProcessHandler(c *gin.Context) {
 		VideoFilenameOrigin: file.Filename,
 		Transcript:          transcript,
 		Segments:            jsonData,
+		ProcessType:         "process",
 		CreatedAt:           time.Now(),
 	}
 	if err := config.Db.Create(&captionHistory).Error; err != nil {
@@ -289,6 +290,7 @@ func ProcessVideoHandler(c *gin.Context) {
 		VideoFilenameOrigin: file.Filename,
 		Transcript:          transcript,
 		Segments:            segmentsJSON,
+		ProcessType:         "process-video",
 		CreatedAt:           time.Now(),
 	}
 	if err := config.Db.Create(&captionHistory).Error; err != nil {
@@ -721,55 +723,46 @@ Trả về dưới dạng JSON:
 }`, transcript, duration, currentCaption, targetAudience)
 
 	// Gọi GPT để phân tích
-	analysis, err := service.GenerateSuggestion(prompt, apiKey)
+	analysisRaw, err := service.GenerateSuggestion(prompt, apiKey)
+	log.Printf("[TikTokOptimizer] GPT response: %v", analysisRaw)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT error"})
 		return
 	}
-
-	// Parse response (trong thực tế nên dùng structured output)
-	// Tạm thời tạo mock data
-	hookScore := 85
-	if duration < 30 {
-		hookScore = 90
-	} else if duration > 180 {
-		hookScore = 70
-	}
-
-	optimizationTips := []string{
-		"Thêm hook mạnh trong 3 giây đầu",
-		"Sử dụng trending sounds",
-		"Tối ưu hashtags cho algorithm",
-		"Tăng engagement với câu hỏi",
-		"Post vào giờ cao điểm (19:00-21:00)",
-	}
-
-	trendingHashtags := []string{
-		"#fyp", "#foryou", "#viral", "#trending", "#tiktok",
-		"#funny", "#comedy", "#dance", "#music", "#love",
-	}
-
-	suggestedCaption := fmt.Sprintf("🔥 %s\n\n%s\n\n%s",
-		"Video hay quá!",
-		transcript[:100]+"...",
-		"#fyp #foryou #viral #trending #tiktok",
-	)
-
-	engagementPrompts := []string{
-		"Bạn có thích video này không?",
-		"Comment số 1 nếu đồng ý!",
-		"Follow để xem thêm content hay!",
+	var analysis interface{} = analysisRaw
+	// Parse analysis thành map[string]interface{}
+	var result map[string]interface{}
+	if s, ok := analysis.(string); ok {
+		if err := json.Unmarshal([]byte(s), &result); err != nil {
+			log.Printf("[TikTokOptimizer] Failed to parse GPT JSON: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT response parse error"})
+			return
+		}
+	} else if m, ok := analysis.(map[string]interface{}); ok {
+		result = m
+	} else {
+		log.Printf("[TikTokOptimizer] Unexpected GPT response type: %T", analysis)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT response type error"})
+		return
 	}
 
 	// Lưu history
 	jsonData, _ := json.Marshal(segments)
+	var suggestionStr string
+	if s, ok := analysis.(string); ok {
+		suggestionStr = s
+	} else if m, ok := analysis.(map[string]interface{}); ok {
+		b, _ := json.Marshal(m)
+		suggestionStr = string(b)
+	}
 	captionHistory := config.CaptionHistory{
 		UserID:              userID,
 		VideoFilename:       file.Filename,
 		VideoFilenameOrigin: file.Filename,
 		Transcript:          transcript,
 		Segments:            jsonData,
-		Suggestion:          analysis,
+		Suggestion:          suggestionStr, // Lưu lại response dạng string
+		ProcessType:         "tiktok-optimize",
 		CreatedAt:           time.Now(),
 	}
 	if err := config.Db.Create(&captionHistory).Error; err != nil {
@@ -777,17 +770,9 @@ Trả về dưới dạng JSON:
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"hook_score":         hookScore,
-		"optimization_tips":  optimizationTips,
-		"trending_hashtags":  trendingHashtags,
-		"suggested_caption":  suggestedCaption,
-		"best_posting_time":  "19:00-21:00",
-		"viral_potential":    75,
-		"engagement_prompts": engagementPrompts,
-		"call_to_action":     "Follow để xem thêm content hay! 🔥",
-		"transcript":         transcript,
-		"segments":           segments,
-		"id":                 captionHistory.ID,
-	})
+	// Trả về đúng các trường từ GPT
+	result["transcript"] = transcript
+	result["segments"] = segments
+	result["id"] = captionHistory.ID
+	c.JSON(http.StatusOK, result)
 }

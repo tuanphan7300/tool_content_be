@@ -70,6 +70,7 @@ type CaptionHistory struct {
 	OriginalSrtFile     string         `json:"original_srt_file" gorm:"type:varchar(500)"`
 	TTSFile             string         `json:"tts_file" gorm:"type:varchar(500)"`
 	MergedVideoFile     string         `json:"merged_video_file" gorm:"type:varchar(500)"`
+	ProcessType         string         `json:"process_type" gorm:"type:varchar(64);index"`
 	CreatedAt           time.Time      `json:"created_at"`
 	UpdatedAt           time.Time      `json:"updated_at"`
 }

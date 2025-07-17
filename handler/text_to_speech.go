@@ -72,6 +72,7 @@ func TextToSpeechHandler(c *gin.Context) {
 		Transcript:          req.Text,
 		VideoFilename:       filename,
 		VideoFilenameOrigin: "text_to_speech.mp3",
+		ProcessType:         "text-to-speech",
 		CreatedAt:           time.Now(),
 	}
 

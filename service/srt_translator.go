@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"os"
 	"strconv"
 	"strings"
@@ -207,6 +208,7 @@ File SRT gốc:
 // TranslateSRTFileWithModel dịch SRT với modelName động
 func TranslateSRTFileWithModel(srtFilePath, apiKey, modelName string) (string, error) {
 	// Read the original SRT file
+	log.Infof("sử dụng model gemini %s", modelName)
 	srtContent, err := os.ReadFile(srtFilePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read SRT file: %v", err)

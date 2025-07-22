@@ -144,6 +144,7 @@ func GenerateWithGemini(prompt, apiKey, modelName string) (string, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		fmt.Printf("[Gemini API ERROR] Status: %d, Body: %s\n", resp.StatusCode, string(body))
 		return "", fmt.Errorf("Gemini API error: %s", string(body))
 	}
 

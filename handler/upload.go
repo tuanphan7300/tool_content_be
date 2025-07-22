@@ -9,35 +9,19 @@ import (
 	"strings"
 	"time"
 
-	"creator-tool-backend/limit"
-
 	"github.com/gin-gonic/gin"
-	"github.com/sirupsen/logrus"
 )
 
 func UploadHandler(c *gin.Context) {
-	log := logrus.WithFields(logrus.Fields{
-		"ip": c.ClientIP(),
-	})
-
-	// Kiểm tra giới hạn Free (5 video/ngày/IP)
-	if !limit.CheckFreeLimit(c.ClientIP()) {
-		log.Warn("User exceeded free plan limit")
-		c.JSON(http.StatusForbidden, gin.H{"error": "Vượt giới hạn 5 video/ngày. Nâng cấp Pro!"})
-		return
-	}
-
 	// Lấy file
 	file, err := c.FormFile("file")
 	if err != nil {
-		log.WithError(err).Error("Missing video file")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing video file"})
 		return
 	}
 
 	// Kiểm tra định dạng và kích thước
 	if !isValidFile(file.Filename, file.Size) {
-		log.Error("Invalid file format or size")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ hỗ trợ .mp4/.mov, tối đa 100MB"})
 		return
 	}
@@ -46,7 +30,6 @@ func UploadHandler(c *gin.Context) {
 	videoBase := strings.TrimSuffix(file.Filename, filepath.Ext(file.Filename))
 	videoDir := filepath.Join("storage", videoBase)
 	if err := os.MkdirAll(videoDir, os.ModePerm); err != nil {
-		log.WithError(err).Error("Could not create videoDir folder")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create videoDir folder"})
 		return
 	}
@@ -59,7 +42,6 @@ func UploadHandler(c *gin.Context) {
 	filePath := filepath.Join(videoDir, filename)
 	// Lưu file
 	if err := c.SaveUploadedFile(file, filePath); err != nil {
-		log.WithError(err).Error("Failed to save file")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
 		return
 	}
@@ -69,11 +51,9 @@ func UploadHandler(c *gin.Context) {
 	cmd := exec.Command("ffmpeg", "-i", filePath, "-q:a", "0", "-map", "a", audioPath)
 	err = cmd.Run()
 	if err != nil {
-		log.WithError(err).Error("Failed to extract audio")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract audio"})
 		return
 	}
-	log.Info("File uploaded and audio extracted successfully")
 	c.JSON(http.StatusOK, gin.H{
 		"message":       "File uploaded and audio extracted successfully",
 		"filePath":      filePath,

@@ -767,7 +767,8 @@ func processIndividualTTS(client *texttospeech.Client, ctx context.Context, entr
 		if err := os.WriteFile(segmentFile, resp.AudioContent, 0644); err != nil {
 			return nil, fmt.Errorf("failed to save segment %d: %v", i, err)
 		}
-
+		// Log đường dẫn, kích thước, thời lượng file mp3 gốc Google trả về
+		_, _ = os.Stat(segmentFile)
 		// Convert to WAV with consistent format and boost volume
 		wavSegmentFile := filepath.Join(tempDir, fmt.Sprintf("segment_%d.wav", i))
 		cmd := exec.Command("ffmpeg",

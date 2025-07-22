@@ -2,7 +2,6 @@ package handler
 
 import (
 	"creator-tool-backend/config"
-	"creator-tool-backend/limit"
 	"creator-tool-backend/service"
 	"creator-tool-backend/util"
 	"encoding/json"
@@ -15,16 +14,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/sirupsen/logrus"
+	"gorm.io/datatypes"
 )
 
 func ProcessHandler(c *gin.Context) {
 	configg := config.InfaConfig{}
 	configg.LoadConfig()
 	apiKey := configg.ApiKey
-	log := logrus.WithFields(logrus.Fields{
-		"ip": c.ClientIP(),
-	})
 
 	// Lấy user_id từ token
 	userID := c.GetUint("user_id")
@@ -33,30 +29,45 @@ func ProcessHandler(c *gin.Context) {
 		return
 	}
 
-	// Kiểm tra giới hạn Free (5 video/ngày/IP)
-	if !limit.CheckFreeLimit(c.ClientIP()) {
-		log.Warn("User exceeded free plan limit")
-		c.JSON(http.StatusForbidden, gin.H{"error": "Vượt giới hạn 3 video/ngày. Nâng cấp Pro!"})
-		return
-	}
-
 	file, err := c.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "File upload error"})
 		return
 	}
-
-	// Lưu file tạm
-	_, _, _, saveAudioPath, _ := util.Processfile(c, file)
-	// Kiểm tra duration < 10 phút
-	duration, _ := util.GetAudioDuration(saveAudioPath)
-	if duration > 600 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 10 phút."})
+	// Kiểm tra kích thước file không quá 100MB
+	if file.Size > 100*1024*1024 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ hỗ trợ file tối đa 100MB."})
 		return
 	}
 
+	// Tạo thư mục riêng cho video process
+	timestamp := time.Now().UnixNano()
+	baseName := strings.TrimSuffix(filepath.Base(file.Filename), filepath.Ext(file.Filename))
+	uniqueName := fmt.Sprintf("%d_%s%s", timestamp, baseName, filepath.Ext(file.Filename))
+	videoDir := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName)))
+	if err := os.MkdirAll(videoDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create video directory"})
+		return
+	}
+	videoPath := filepath.Join(videoDir, uniqueName)
+	if err := c.SaveUploadedFile(file, videoPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save video file"})
+		return
+	}
+	// Tách audio từ video vào đúng thư mục
+	audioPath, err := util.ProcessfileToDir(c, file, videoDir)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract audio"})
+		return
+	}
+	// Kiểm tra duration < 7 phút
+	duration, _ := util.GetAudioDuration(audioPath)
+	if duration > 420 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 7 phút."})
+		return
+	}
 	// Gọi Whisper để lấy transcript và usage thực tế
-	transcript, segments, whisperUsage, err := service.TranscribeWhisperOpenAI(saveAudioPath, apiKey)
+	transcript, segments, whisperUsage, err := service.TranscribeWhisperOpenAI(audioPath, apiKey)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Whisper error"})
 		return
@@ -66,7 +77,7 @@ func ProcessHandler(c *gin.Context) {
 	if whisperUsage != nil && whisperUsage.TotalTokens > 0 {
 		whisperTokens = whisperUsage.TotalTokens
 	} else {
-		duration, _ := util.GetAudioDuration(saveAudioPath)
+		duration, _ := util.GetAudioDuration(audioPath)
 		whisperTokens = int(duration/60.0*6 + 0.5)
 		if whisperTokens < 6 {
 			whisperTokens = 6
@@ -76,7 +87,7 @@ func ProcessHandler(c *gin.Context) {
 	jsonData, _ := json.Marshal(segments)
 	captionHistory := config.CaptionHistory{
 		UserID:              userID,
-		VideoFilename:       file.Filename,
+		VideoFilename:       videoPath,
 		VideoFilenameOrigin: file.Filename,
 		Transcript:          transcript,
 		Segments:            jsonData,
@@ -117,9 +128,6 @@ func ProcessVideoHandler(c *gin.Context) {
 	configg.LoadConfig()
 	apiKey := configg.ApiKey
 	geminiKey := configg.GeminiKey
-	log := logrus.WithFields(logrus.Fields{
-		"ip": c.ClientIP(),
-	})
 
 	// Lấy user_id từ token
 	userID := c.GetUint("user_id")
@@ -144,20 +152,9 @@ func ProcessVideoHandler(c *gin.Context) {
 		}
 	}()
 
-	// Kiểm tra giới hạn Free (3 video/ngày/IP)
-	if !limit.CheckFreeLimit(c.ClientIP()) {
-		log.Warn("User exceeded free plan limit")
-		if processID > 0 {
-			processService.UpdateProcessStatus(processID, "failed")
-		}
-		c.JSON(http.StatusForbidden, gin.H{"error": "Vượt giới hạn 3 video/ngày. Nâng cấp Pro!"})
-		return
-	}
-
 	// Get the uploaded file
 	file, err := c.FormFile("file")
 	if err != nil {
-		log.Printf("Error getting video file: %v", err)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
@@ -166,18 +163,21 @@ func ProcessVideoHandler(c *gin.Context) {
 		})
 		return
 	}
+	// Kiểm tra kích thước file không quá 100MB
+	if file.Size > 100*1024*1024 {
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ hỗ trợ file tối đa 100MB."})
+		return
+	}
 
-	log.Printf("Received video file: %s, size: %d bytes", file.Filename, file.Size)
-
-	// Tạo tên file duy nhất
+	// Tạo thư mục riêng cho video
 	timestamp := time.Now().UnixNano()
 	baseName := strings.TrimSuffix(filepath.Base(file.Filename), filepath.Ext(file.Filename))
 	uniqueName := fmt.Sprintf("%d_%s%s", timestamp, baseName, filepath.Ext(file.Filename))
-
-	// Tạo thư mục riêng cho video
 	videoDir := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName)))
 	if err := os.MkdirAll(videoDir, 0755); err != nil {
-		log.Printf("Error creating video directory: %v", err)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
@@ -190,7 +190,6 @@ func ProcessVideoHandler(c *gin.Context) {
 	// Lưu video vào thư mục riêng
 	videoPath := filepath.Join(videoDir, uniqueName)
 	if err := c.SaveUploadedFile(file, videoPath); err != nil {
-		log.Printf("Error saving video file: %v", err)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
@@ -200,33 +199,28 @@ func ProcessVideoHandler(c *gin.Context) {
 		return
 	}
 
-	log.Printf("Video file saved to: %s", videoPath)
-
 	// Tách audio từ video
 	audioPath, err := util.ProcessfileToDir(c, file, videoDir)
 	if err != nil {
-		log.Printf("Error processing file: %v", err)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process file"})
 		return
 	}
-
-	// Kiểm tra duration < 10 phút
+	// Kiểm tra duration < 7 phút
 	duration, _ := util.GetAudioDuration(audioPath)
-	if duration > 600 {
+	if duration > 420 {
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 10 phút."})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 7 phút."})
 		return
 	}
 
 	// Gọi Whisper để lấy transcript và usage thực tế
 	transcript, segments, _, err := service.TranscribeWhisperOpenAI(audioPath, apiKey)
 	if err != nil {
-		log.Printf("Error transcribing vocals: %v", err)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
@@ -240,7 +234,6 @@ func ProcessVideoHandler(c *gin.Context) {
 	pricingService := service.NewPricingService()
 	whisperCost, err := pricingService.CalculateWhisperCost(durationMinutes)
 	if err != nil {
-		log.Printf("Error calculating Whisper cost: %v", err)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
@@ -248,12 +241,9 @@ func ProcessVideoHandler(c *gin.Context) {
 		return
 	}
 
-	log.Printf("Whisper cost: $%.6f for %.2f minutes", whisperCost, durationMinutes)
-
 	// Ước tính tổng chi phí với markup và lock credit
 	estimatedCostWithMarkup, err := pricingService.EstimateProcessVideoCostWithMarkup(durationMinutes, len(transcript), len("estimated_text"), userID)
 	if err != nil {
-		log.Printf("Error estimating cost with markup: %v", err)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
@@ -266,7 +256,6 @@ func ProcessVideoHandler(c *gin.Context) {
 	// Lock credit trước khi xử lý
 	_, err = creditService.LockCredits(userID, estimatedCost, "process-video", "Lock credit for video processing", nil)
 	if err != nil {
-		log.Printf("Error locking credits: %v", err)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
@@ -286,7 +275,7 @@ func ProcessVideoHandler(c *gin.Context) {
 	segmentsJSON, _ := json.Marshal(segments)
 	captionHistory := config.CaptionHistory{
 		UserID:              userID,
-		VideoFilename:       uniqueName,
+		VideoFilename:       videoPath,
 		VideoFilenameOrigin: file.Filename,
 		Transcript:          transcript,
 		Segments:            segmentsJSON,
@@ -294,7 +283,6 @@ func ProcessVideoHandler(c *gin.Context) {
 		CreatedAt:           time.Now(),
 	}
 	if err := config.Db.Create(&captionHistory).Error; err != nil {
-		log.Printf("Error saving to database: %v", err)
 		creditService.UnlockCredits(userID, estimatedCost, "process-video", "Unlock due to database error", nil)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
@@ -305,7 +293,6 @@ func ProcessVideoHandler(c *gin.Context) {
 
 	// Trừ credit cho Whisper theo chi phí chính xác
 	if err := creditService.DeductCredits(userID, whisperCost, "whisper", "Whisper transcribe", &captionHistory.ID, "per_minute", durationMinutes); err != nil {
-		log.Printf("[BUG] DeductCredits whisper: userID=%d", userID)
 		creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to Whisper error", nil)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
@@ -318,7 +305,6 @@ func ProcessVideoHandler(c *gin.Context) {
 	originalSRTPath := filepath.Join(videoDir, strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName))+"_original.srt")
 	originalSRTContent := createSRT(segments)
 	if err := os.WriteFile(originalSRTPath, []byte(originalSRTContent), 0644); err != nil {
-		log.Printf("Error creating original SRT file: %v", err)
 		creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to SRT error", nil)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
@@ -330,7 +316,6 @@ func ProcessVideoHandler(c *gin.Context) {
 	// Lấy service_name và model_api_name cho nghiệp vụ dịch SRT từ bảng service_config
 	serviceName, srtModelAPIName, err := pricingService.GetActiveServiceForType("srt_translation")
 	if err != nil {
-		log.Printf("Error getting active SRT translation service: %v", err)
 		creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to service config error", nil)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
@@ -342,7 +327,6 @@ func ProcessVideoHandler(c *gin.Context) {
 	// Translate the original SRT file using Gemini
 	translatedSRTContent, err := service.TranslateSRTFileWithModel(originalSRTPath, geminiKey, srtModelAPIName)
 	if err != nil {
-		log.Printf("Error translating SRT file: %v", err)
 		creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to translation error", nil)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
@@ -354,7 +338,6 @@ func ProcessVideoHandler(c *gin.Context) {
 	// Save translated SRT file
 	translatedSRTPath := filepath.Join(videoDir, strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName))+"_vi.srt")
 	if err := os.WriteFile(translatedSRTPath, []byte(translatedSRTContent), 0644); err != nil {
-		log.Printf("Error saving translated SRT file: %v", err)
 		creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to SRT save error", nil)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
@@ -366,7 +349,6 @@ func ProcessVideoHandler(c *gin.Context) {
 	// Tính chi phí Gemini theo số ký tự thực tế - sử dụng serviceName, không phải model_api_name
 	geminiCost, geminiTokens, _, err := pricingService.CalculateGeminiCost(originalSRTContent, serviceName)
 	if err != nil {
-		log.Printf("Error calculating Gemini cost: %v", err)
 		creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to Gemini cost error", nil)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
@@ -375,10 +357,7 @@ func ProcessVideoHandler(c *gin.Context) {
 		return
 	}
 
-	log.Printf("Gemini cost: $%.6f for %d tokens", geminiCost, geminiTokens)
-
 	if err := creditService.DeductCredits(userID, geminiCost, serviceName, "Gemini dịch SRT", &captionHistory.ID, "per_token", float64(geminiTokens)); err != nil {
-		log.Printf("[BUG] DeductCredits gemini: userID=%d", userID)
 		creditService.UnlockCredits(userID, estimatedCost-whisperCost-geminiCost, "process-video", "Unlock remaining credits due to Gemini deduction error", nil)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
@@ -395,43 +374,28 @@ func ProcessVideoHandler(c *gin.Context) {
 	speakingRate := 1.2
 
 	// Log raw form values
-	log.Printf("Raw form values - background_volume: %s, tts_volume: %s, speaking_rate: %s",
-		c.PostForm("background_volume"), c.PostForm("tts_volume"), c.PostForm("speaking_rate"))
-
 	if v := c.PostForm("background_volume"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			backgroundVolume = f
-			log.Printf("Parsed background_volume: %.2f", backgroundVolume)
-		} else {
-			log.Printf("Failed to parse background_volume: %s, error: %v", v, err)
 		}
 	}
 	if v := c.PostForm("tts_volume"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			ttsVolume = f
-			log.Printf("Parsed tts_volume: %.2f", ttsVolume)
-		} else {
-			log.Printf("Failed to parse tts_volume: %s, error: %v", v, err)
 		}
 	}
 	if v := c.PostForm("speaking_rate"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			speakingRate = f
-			log.Printf("Parsed speaking_rate: %.2f", speakingRate)
-		} else {
-			log.Printf("Failed to parse speaking_rate: %s, error: %v", v, err)
 		}
 	}
 
-	log.Printf("Final volume settings - background: %.2f, tts: %.2f, speaking_rate: %.2f",
-		backgroundVolume, ttsVolume, speakingRate)
 	// Read translated SRT content for TTS
 	srtContentBytes, _ := os.ReadFile(translatedSRTPath)
 
 	// Tính chi phí TTS theo số ký tự thực tế (sử dụng Wavenet cho chất lượng tốt)
 	ttsCost, err := pricingService.CalculateTTSCost(string(srtContentBytes), true)
 	if err != nil {
-		log.Printf("Error calculating TTS cost: %v", err)
 		creditService.UnlockCredits(userID, estimatedCost-whisperCost-geminiCost, "process-video", "Unlock remaining credits due to TTS cost error", nil)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
@@ -440,10 +404,7 @@ func ProcessVideoHandler(c *gin.Context) {
 		return
 	}
 
-	log.Printf("TTS cost: $%.6f for %d characters", ttsCost, len(srtContentBytes))
-
 	if err := creditService.DeductCredits(userID, ttsCost, "tts", "Google TTS", &captionHistory.ID, "per_character", float64(len(srtContentBytes))); err != nil {
-		log.Printf("[BUG] DeductCredits tts: userID=%d", userID)
 		creditService.UnlockCredits(userID, estimatedCost-whisperCost-geminiCost-ttsCost, "process-video", "Unlock remaining credits due to TTS deduction error", nil)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
@@ -455,7 +416,6 @@ func ProcessVideoHandler(c *gin.Context) {
 	// Convert translated SRT to speech
 	ttsPath, err := service.ConvertSRTToSpeech(string(srtContentBytes), videoDir, speakingRate)
 	if err != nil {
-		log.Printf("Error converting SRT to speech: %v", err)
 		creditService.UnlockCredits(userID, estimatedCost-whisperCost-geminiCost-ttsCost, "process-video", "Unlock remaining credits due to TTS conversion error", nil)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
@@ -467,19 +427,14 @@ func ProcessVideoHandler(c *gin.Context) {
 	// Merge video with background music and TTS audio
 	backgroundPath, err := service.ExtractBackgroundMusicAsync(audioPath, uniqueName, videoDir)
 	if err != nil {
-		log.Printf("Error extracting background music: %v", err)
-		log.Printf("Trying FFmpeg fallback...")
 		backgroundPath, err = service.FallbackSeparateAudio(audioPath, uniqueName, "no_vocals", videoDir)
 		if err != nil {
-			log.Printf("FFmpeg fallback also failed: %v", err)
-			// Sử dụng audio gốc nếu tách thất bại
 			backgroundPath = audioPath
 		}
 	}
 
 	mergedVideoPath, err := service.MergeVideoWithAudio(videoPath, backgroundPath, ttsPath, videoDir, backgroundVolume, ttsVolume)
 	if err != nil {
-		log.Printf("Error merging video: %v", err)
 		mergedVideoPath = ""
 	}
 
@@ -497,8 +452,6 @@ func ProcessVideoHandler(c *gin.Context) {
 		processService.UpdateProcessStatus(processID, "completed")
 		processService.UpdateProcessVideoID(processID, captionHistory.ID)
 	}
-
-	log.Printf("Total cost: $%.6f", estimatedCost)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":          "Video processed successfully",
@@ -643,9 +596,6 @@ func TikTokOptimizerHandler(c *gin.Context) {
 	configg := config.InfaConfig{}
 	configg.LoadConfig()
 	apiKey := configg.ApiKey
-	log := logrus.WithFields(logrus.Fields{
-		"ip": c.ClientIP(),
-	})
 
 	// Lấy user_id từ token
 	userID := c.GetUint("user_id")
@@ -654,12 +604,32 @@ func TikTokOptimizerHandler(c *gin.Context) {
 		return
 	}
 
-	// Kiểm tra giới hạn Free (5 video/ngày/IP)
-	if !limit.CheckFreeLimit(c.ClientIP()) {
-		log.Warn("User exceeded free plan limit")
-		c.JSON(http.StatusForbidden, gin.H{"error": "Vượt giới hạn 3 video/ngày. Nâng cấp Pro!"})
+	// Kiểm tra trạng thái process TikTok Optimizer đang chạy
+	var existingProcess config.UserProcessStatus
+	err := config.Db.Where("user_id = ? AND process_type = ? AND status = ?", userID, "tiktok-optimize", "processing").First(&existingProcess).Error
+	if err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Bạn đang có một quá trình TikTok Optimizer đang chạy. Vui lòng chờ hoàn thành trước khi upload mới."})
 		return
 	}
+
+	// Tạo trạng thái process TikTok Optimizer (processing)
+	processStatus := config.UserProcessStatus{
+		UserID:      userID,
+		Status:      "processing",
+		ProcessType: "tiktok-optimize",
+		StartedAt:   time.Now(),
+	}
+	if err := config.Db.Create(&processStatus).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo trạng thái process"})
+		return
+	}
+	defer func() {
+		// Nếu có panic hoặc return sớm, cập nhật trạng thái failed
+		if r := recover(); r != nil {
+			config.Db.Model(&processStatus).Update("status", "failed")
+			panic(r)
+		}
+	}()
 
 	file, err := c.FormFile("file")
 	if err != nil {
@@ -674,57 +644,76 @@ func TikTokOptimizerHandler(c *gin.Context) {
 		targetAudience = "general"
 	}
 
-	// Lưu file tạm
-	_, _, _, saveAudioPath, _ := util.Processfile(c, file)
-
-	// Kiểm tra duration < 10 phút
-	duration, _ := util.GetAudioDuration(saveAudioPath)
-	if duration > 600 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 10 phút."})
+	// Tạo thư mục riêng cho video TikTok Optimizer
+	timestamp := time.Now().UnixNano()
+	baseName := strings.TrimSuffix(filepath.Base(file.Filename), filepath.Ext(file.Filename))
+	uniqueName := fmt.Sprintf("%d_%s%s", timestamp, baseName, filepath.Ext(file.Filename))
+	videoDir := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName)))
+	if err := os.MkdirAll(videoDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create video directory"})
+		return
+	}
+	videoPath := filepath.Join(videoDir, uniqueName)
+	if err := c.SaveUploadedFile(file, videoPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save video file"})
+		return
+	}
+	// Tách audio từ video vào đúng thư mục
+	audioPath, err := util.ProcessfileToDir(c, file, videoDir)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract audio"})
+		return
+	}
+	// Kiểm tra duration < 7 phút
+	duration, _ := util.GetAudioDuration(audioPath)
+	if duration > 420 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 7 phút."})
 		return
 	}
 
 	// Gọi Whisper để lấy transcript
-	transcript, segments, _, err := service.TranscribeWhisperOpenAI(saveAudioPath, apiKey)
+	transcript, segments, _, err := service.TranscribeWhisperOpenAI(audioPath, apiKey)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Whisper error"})
 		return
 	}
 
 	// Tạo prompt cho TikTok optimization
-	prompt := fmt.Sprintf(`Phân tích video TikTok và đưa ra gợi ý tối ưu:
+	prompt := fmt.Sprintf(`Phân tích video TikTok và đưa ra gợi ý tối ưu. TRẢ VỀ KẾT QUẢ BẰNG TIẾNG VIỆT:
 
 Video transcript: %s
 Thời lượng: %.1f giây
 Caption hiện tại: %s
 Target audience: %s
 
-Hãy phân tích và đưa ra:
+Hãy phân tích và đưa ra (TẤT CẢ BẰNG TIẾNG VIỆT):
 
 1. HOOK SCORE (0-100): Đánh giá độ mạnh của hook trong 3 giây đầu
-2. OPTIMIZATION TIPS: 3-5 tips để tối ưu video
+2. OPTIMIZATION TIPS: 3-5 tips để tối ưu video (bằng tiếng Việt)
 3. TRENDING HASHTAGS: 10 hashtags trending phù hợp
-4. SUGGESTED CAPTION: Caption tối ưu cho TikTok
+4. SUGGESTED CAPTION: Caption tối ưu cho TikTok (bằng tiếng Việt)
 5. BEST POSTING TIME: Thời gian đăng tốt nhất
 6. VIRAL POTENTIAL: Điểm viral tiềm năng (0-100)
-7. ENGAGEMENT PROMPTS: 3 câu hỏi để tăng engagement
-8. CALL TO ACTION: Gợi ý CTA hiệu quả
+7. ENGAGEMENT PROMPTS: 3 câu hỏi để tăng engagement (bằng tiếng Việt)
+8. CALL TO ACTION: Gợi ý CTA hiệu quả (bằng tiếng Việt)
 
-Trả về dưới dạng JSON:
+LƯU Ý: Tất cả nội dung phải bằng tiếng Việt, chỉ có hashtags có thể có tiếng Anh.
+
+QUAN TRỌNG: Chỉ trả về JSON thuần túy, không có text giải thích thêm.
+
 {
   "hook_score": 85,
-  "optimization_tips": ["tip1", "tip2", "tip3"],
+  "optimization_tips": ["Gợi ý 1 bằng tiếng Việt", "Gợi ý 2 bằng tiếng Việt", "Gợi ý 3 bằng tiếng Việt"],
   "trending_hashtags": ["#hashtag1", "#hashtag2"],
-  "suggested_caption": "Caption tối ưu...",
+  "suggested_caption": "Caption tối ưu bằng tiếng Việt...",
   "best_posting_time": "19:00-21:00",
   "viral_potential": 75,
-  "engagement_prompts": ["Câu hỏi 1?", "Câu hỏi 2?"],
+  "engagement_prompts": ["Câu hỏi 1 bằng tiếng Việt?", "Câu hỏi 2 bằng tiếng Việt?"],
   "call_to_action": "Follow để xem thêm!"
 }`, transcript, duration, currentCaption, targetAudience)
 
 	// Gọi GPT để phân tích
-	analysisRaw, err := service.GenerateSuggestion(prompt, apiKey)
-	log.Printf("[TikTokOptimizer] GPT response: %v", analysisRaw)
+	analysisRaw, err := service.GenerateTikTokOptimization(prompt, apiKey)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT error"})
 		return
@@ -733,37 +722,64 @@ Trả về dưới dạng JSON:
 	// Parse analysis thành map[string]interface{}
 	var result map[string]interface{}
 	if s, ok := analysis.(string); ok {
-		if err := json.Unmarshal([]byte(s), &result); err != nil {
-			log.Printf("[TikTokOptimizer] Failed to parse GPT JSON: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT response parse error"})
+		// Tìm JSON trong response (có thể có text thêm)
+		jsonStart := strings.Index(s, "{")
+		jsonEnd := strings.LastIndex(s, "}")
+		if jsonStart >= 0 && jsonEnd > jsonStart {
+			jsonStr := s[jsonStart : jsonEnd+1]
+			if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT response parse error"})
+				return
+			}
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "No JSON found in GPT response"})
 			return
 		}
 	} else if m, ok := analysis.(map[string]interface{}); ok {
 		result = m
 	} else {
-		log.Printf("[TikTokOptimizer] Unexpected GPT response type: %T", analysis)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT response type error"})
 		return
 	}
 
 	// Lưu history
 	jsonData, _ := json.Marshal(segments)
-	var suggestionStr string
-	if s, ok := analysis.(string); ok {
-		suggestionStr = s
-	} else if m, ok := analysis.(map[string]interface{}); ok {
-		b, _ := json.Marshal(m)
-		suggestionStr = string(b)
-	}
 	captionHistory := config.CaptionHistory{
 		UserID:              userID,
-		VideoFilename:       file.Filename,
+		VideoFilename:       videoPath,
 		VideoFilenameOrigin: file.Filename,
 		Transcript:          transcript,
 		Segments:            jsonData,
-		Suggestion:          suggestionStr, // Lưu lại response dạng string
 		ProcessType:         "tiktok-optimize",
 		CreatedAt:           time.Now(),
+	}
+	// Gán các trường TikTok Optimizer nếu có
+	if v, ok := result["hook_score"].(float64); ok {
+		captionHistory.HookScore = int(v)
+	}
+	if v, ok := result["viral_potential"].(float64); ok {
+		captionHistory.ViralPotential = int(v)
+	}
+	if v, ok := result["trending_hashtags"].([]interface{}); ok {
+		b, _ := json.Marshal(v)
+		captionHistory.TrendingHashtags = datatypes.JSON(b)
+	}
+	if v, ok := result["suggested_caption"].(string); ok {
+		captionHistory.SuggestedCaption = v
+	}
+	if v, ok := result["best_posting_time"].(string); ok {
+		captionHistory.BestPostingTime = v
+	}
+	if v, ok := result["optimization_tips"].([]interface{}); ok {
+		b, _ := json.Marshal(v)
+		captionHistory.OptimizationTips = datatypes.JSON(b)
+	}
+	if v, ok := result["engagement_prompts"].([]interface{}); ok {
+		b, _ := json.Marshal(v)
+		captionHistory.EngagementPrompts = datatypes.JSON(b)
+	}
+	if v, ok := result["call_to_action"].(string); ok {
+		captionHistory.CallToAction = v
 	}
 	if err := config.Db.Create(&captionHistory).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save history"})
@@ -774,5 +790,9 @@ Trả về dưới dạng JSON:
 	result["transcript"] = transcript
 	result["segments"] = segments
 	result["id"] = captionHistory.ID
+	config.Db.Model(&processStatus).Updates(map[string]interface{}{
+		"status":      "completed",
+		"CompletedAt": time.Now(),
+	})
 	c.JSON(http.StatusOK, result)
 }

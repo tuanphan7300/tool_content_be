@@ -2,6 +2,8 @@ package handler
 
 import (
 	"creator-tool-backend/config"
+	"creator-tool-backend/service"
+
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -30,6 +32,14 @@ func RegisterHandler(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "Tạo user thất bại"})
 		return
 	}
+
+	// Lấy lại user vừa tạo để lấy userID
+	user, err = GetUserByEmail(c, req.Email)
+	if err == nil && user.ID != 0 {
+		creditService := service.NewCreditService()
+		_ = creditService.AddCredits(user.ID, 2, "Tặng credit đăng ký mới", "register_bonus")
+	}
+
 	c.JSON(200, gin.H{"message": "register success"})
 }
 

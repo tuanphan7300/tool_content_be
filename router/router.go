@@ -31,6 +31,8 @@ func SetupRoutes(r *gin.Engine) {
 		protected.POST("/save-history", handler.SaveHistory)
 		protected.GET("/history", handler.GetHistory)
 		protected.GET("/history/:id", handler.GetHistoryByID)
+		protected.DELETE("/history/:id", handler.DeleteHistory)
+		protected.DELETE("/history", handler.DeleteHistories)
 		protected.POST("/process-voice", handler.ProcessVoiceHandler)
 		protected.POST("/process-background", handler.ProcessBackgroundMusicHandler)
 		protected.POST("/process-video", middleware.ProcessStatusMiddleware("process-video"), handler.ProcessVideoHandler)

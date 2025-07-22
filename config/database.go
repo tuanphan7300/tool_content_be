@@ -71,8 +71,17 @@ type CaptionHistory struct {
 	TTSFile             string         `json:"tts_file" gorm:"type:varchar(500)"`
 	MergedVideoFile     string         `json:"merged_video_file" gorm:"type:varchar(500)"`
 	ProcessType         string         `json:"process_type" gorm:"type:varchar(64);index"`
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
+	// TikTok Optimizer fields
+	HookScore         int            `json:"hook_score" gorm:"type:int;default:0"`
+	ViralPotential    int            `json:"viral_potential" gorm:"type:int;default:0"`
+	TrendingHashtags  datatypes.JSON `json:"trending_hashtags" gorm:"type:json"`
+	SuggestedCaption  string         `json:"suggested_caption" gorm:"type:text"`
+	BestPostingTime   string         `json:"best_posting_time" gorm:"type:varchar(64)"`
+	OptimizationTips  datatypes.JSON `json:"optimization_tips" gorm:"type:json"`
+	EngagementPrompts datatypes.JSON `json:"engagement_prompts" gorm:"type:json"`
+	CallToAction      string         `json:"call_to_action" gorm:"type:text"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
 }
 
 type Users struct {

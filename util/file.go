@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"creator-tool-backend/service"
+
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
 )
@@ -114,4 +116,32 @@ func ProcessfileToDir(c *gin.Context, file *multipart.FileHeader, videoDir strin
 		return "", err
 	}
 	return audioPath, nil
+}
+
+// CleanupDir xóa toàn bộ thư mục và file con, log lại khi xóa
+func CleanupDir(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	err := os.RemoveAll(dir)
+	if err != nil {
+		log.WithError(err).Errorf("[CLEANUP] Failed to remove dir: %s", dir)
+		return err
+	}
+	log.Infof("[CLEANUP] Removed dir: %s", dir)
+	return nil
+}
+
+// ParseSRTFile parses a .srt file and returns segments and transcript
+func ParseSRTFile(srtPath string) ([]service.Segment, string, error) {
+	segments, err := service.ParseSRTToSegments(srtPath)
+	if err != nil {
+		return nil, "", err
+	}
+	var transcriptBuilder strings.Builder
+	for _, seg := range segments {
+		transcriptBuilder.WriteString(seg.Text)
+		transcriptBuilder.WriteString(" ")
+	}
+	return segments, strings.TrimSpace(transcriptBuilder.String()), nil
 }

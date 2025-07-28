@@ -4,6 +4,8 @@ import (
 	"creator-tool-backend/config"
 	"time"
 
+	"os"
+
 	"gorm.io/gorm"
 )
 
@@ -99,8 +101,26 @@ func (s *ProcessStatusService) CleanupStaleProcesses() error {
 		}).Error
 }
 
+// CheckAndCleanupStaleProcesses kiểm tra và cleanup các process bị treo quá 10 phút
+func (s *ProcessStatusService) CheckAndCleanupStaleProcesses(userID uint) error {
+	tenMinutesAgo := time.Now().Add(-10 * time.Minute)
+
+	// Tìm và cập nhật các process bị treo của user này
+	return config.Db.Model(&config.UserProcessStatus{}).
+		Where("user_id = ? AND status = ? AND started_at < ?", userID, "processing", tenMinutesAgo).
+		Updates(map[string]interface{}{
+			"status":       "failed",
+			"completed_at": time.Now(),
+		}).Error
+}
+
 // GetUserActiveProcesses lấy danh sách process đang chạy của user
 func (s *ProcessStatusService) GetUserActiveProcesses(userID uint) ([]config.UserProcessStatus, error) {
+	// Trước tiên, cleanup các process bị treo quá 10 phút
+	if err := s.CheckAndCleanupStaleProcesses(userID); err != nil {
+		return nil, err
+	}
+
 	var processes []config.UserProcessStatus
 
 	err := config.Db.Where("user_id = ? AND status = ?", userID, "processing").
@@ -108,4 +128,50 @@ func (s *ProcessStatusService) GetUserActiveProcesses(userID uint) ([]config.Use
 		Find(&processes).Error
 
 	return processes, err
+}
+
+// DeleteCaptionHistoryAndFiles xóa record CaptionHistory và tất cả file vật lý liên quan
+func (s *ProcessStatusService) DeleteCaptionHistoryAndFiles(history *config.CaptionHistory) error {
+	deleteFile := func(path string) {
+		if path != "" {
+			_ = os.Remove(path)
+		}
+	}
+	deleteFile(history.VideoFilename)
+	deleteFile(history.SrtFile)
+	deleteFile(history.OriginalSrtFile)
+	deleteFile(history.TTSFile)
+	deleteFile(history.MergedVideoFile)
+	deleteFile(history.BackgroundMusic)
+	// Có thể xóa thêm các file khác nếu cần
+	return config.Db.Delete(history).Error
+}
+
+// CleanupOldCaptionHistories xóa các CaptionHistory quá 24h và file liên quan
+func (s *ProcessStatusService) CleanupOldCaptionHistories() error {
+	cutoff := time.Now().Add(-24 * time.Hour)
+	var oldHistories []config.CaptionHistory
+	if err := config.Db.Where("created_at < ?", cutoff).Find(&oldHistories).Error; err != nil {
+		return err
+	}
+	for _, history := range oldHistories {
+		s.DeleteCaptionHistoryAndFiles(&history)
+	}
+	return nil
+}
+
+// LimitUserCaptionHistories giữ tối đa 10 action gần nhất cho mỗi user
+func (s *ProcessStatusService) LimitUserCaptionHistories(userID uint) error {
+	var histories []config.CaptionHistory
+	if err := config.Db.Where("user_id = ? AND deleted_at IS NULL", userID).Order("created_at desc").Find(&histories).Error; err != nil {
+		return err
+	}
+	if len(histories) <= 10 {
+		return nil
+	}
+	// Xóa các action cũ nhất (bắt đầu từ index 10)
+	for i := 10; i < len(histories); i++ {
+		s.DeleteCaptionHistoryAndFiles(&histories[i])
+	}
+	return nil
 }

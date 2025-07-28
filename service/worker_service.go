@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"creator-tool-backend/config"
 )
 
 type WorkerService struct {
@@ -141,8 +143,26 @@ func (ws *WorkerService) worker(id int) {
 
 // processJob xử lý một job cụ thể
 func (ws *WorkerService) processJob(job *AudioProcessingJob) {
-	// Cập nhật trạng thái
 	ws.queueService.UpdateJobStatus(job.ID, "processing")
+
+	if job.JobType == "burn-sub" {
+		// Xử lý burn subtitle vào video
+		resultPath, err := ws.runBurnSubtitle(job)
+		if err != nil {
+			log.Printf("Job %s: Failed to burn subtitle: %v", job.ID, err)
+			ws.queueService.UpdateJobStatus(job.ID, "failed")
+			return
+		}
+		err = ws.queueService.StoreJobResult(job.ID, resultPath)
+		if err != nil {
+			log.Printf("Job %s: Failed to store result: %v", job.ID, err)
+			ws.queueService.UpdateJobStatus(job.ID, "failed")
+			return
+		}
+		ws.queueService.UpdateJobStatus(job.ID, "completed")
+		log.Printf("Job %s: Burn subtitle completed successfully", job.ID)
+		return
+	}
 
 	// Kiểm tra file tồn tại
 	if _, err := os.Stat(job.AudioPath); os.IsNotExist(err) {
@@ -247,6 +267,65 @@ func (ws *WorkerService) runDemucs(ctx context.Context, job *AudioProcessingJob)
 	os.RemoveAll(filepath.Join(outputDir, fileNameWithoutExt))
 
 	return mp3Path, nil
+}
+
+func hexToASSColor(hex string) string {
+	hex = strings.TrimPrefix(hex, "#")
+	if len(hex) != 6 {
+		return "&H00FFFFFF" // fallback trắng
+	}
+	// Định dạng ARGB: &HAABBGGRR
+	// hex: RRGGBB
+	bb := hex[4:6]
+	gg := hex[2:4]
+	rr := hex[0:2]
+	return fmt.Sprintf("&H00%s%s%s", bb, gg, rr)
+}
+
+func (ws *WorkerService) runBurnSubtitle(job *AudioProcessingJob) (string, error) {
+	videoPath := filepath.Join(job.VideoDir, job.FileName)
+	subPath := job.SubtitlePath
+	outputDir := filepath.Join(job.VideoDir, "burned")
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create output directory: %v", err)
+	}
+	timestamp := time.Now().Format("20060102_150405")
+	outputPath := filepath.Join(outputDir, fmt.Sprintf("burned_%s.mp4", timestamp))
+
+	// Xử lý màu chữ và màu nền
+	color := hexToASSColor(job.SubtitleColor)
+	bgcolor := hexToASSColor(job.SubtitleBgColor)
+	forceStyle := fmt.Sprintf("PrimaryColour=%s,BackColour=%s,BorderStyle=3", color, bgcolor)
+
+	cmd := exec.Command(
+		"ffmpeg",
+		"-i", videoPath,
+		"-vf", fmt.Sprintf("subtitles='%s':force_style='%s'", subPath, forceStyle),
+		"-c:a", "copy",
+		"-y",
+		outputPath,
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("FFmpeg burn subtitle error: %s", string(output))
+		return "", fmt.Errorf("failed to burn subtitle: %v, output: %s", err, string(output))
+	}
+
+	// Lưu lịch sử vào database
+	captionHistory := config.CaptionHistory{
+		UserID:              job.UserID,
+		VideoFilename:       filepath.Join(job.VideoDir, job.FileName),
+		VideoFilenameOrigin: job.FileName,
+		SrtFile:             job.SubtitlePath,
+		MergedVideoFile:     outputPath,
+		ProcessType:         "burn-sub",
+		CreatedAt:           time.Now(),
+	}
+	if err := config.Db.Create(&captionHistory).Error; err != nil {
+		log.Printf("Failed to save burn-sub history: %v", err)
+	}
+
+	return outputPath, nil
 }
 
 // monitor theo dõi trạng thái của worker service

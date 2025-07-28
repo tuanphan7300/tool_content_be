@@ -49,6 +49,34 @@ func main() {
 		defer workerService.Stop()
 	}
 
+	// Khởi tạo process status service và cleanup routine
+	log.Println("Initializing process status service...")
+	processStatusService := service.NewProcessStatusService()
+
+	// Chạy background cleanup routine
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute) // Cleanup mỗi 5 phút
+		defer ticker.Stop()
+
+		log.Println("Starting background cleanup routine for stale processes...")
+
+		for {
+			select {
+			case <-ticker.C:
+				if err := processStatusService.CleanupStaleProcesses(); err != nil {
+					log.Printf("Error cleaning up stale processes: %v", err)
+				} else {
+					log.Println("Background cleanup completed successfully (stale processes)")
+				}
+				if err := processStatusService.CleanupOldCaptionHistories(); err != nil {
+					log.Printf("Error cleaning up old caption histories: %v", err)
+				} else {
+					log.Println("Background cleanup completed successfully (old caption histories)")
+				}
+			}
+		}
+	}()
+
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},

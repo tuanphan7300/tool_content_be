@@ -66,14 +66,25 @@ func SaveHistory(c *gin.Context) {
 func GetHistory(c *gin.Context) {
 	userID := c.GetUint("user_id")
 	processType := c.Query("process_type") // Lấy process_type từ query param
+
+	// Debug logs
+	fmt.Printf("GetHistory: userID=%d, processType=%s\n", userID, processType)
+
 	var histories []config.CaptionHistory
-	query := config.Db.Where("user_id = ?", userID)
+	query := config.Db.Where("user_id = ? AND deleted_at IS NULL", userID)
 	if processType != "" {
 		query = query.Where("process_type = ?", processType)
 	}
 	if err := query.Order("created_at desc").Find(&histories).Error; err != nil {
+		fmt.Printf("GetHistory: Error querying database: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Debug logs
+	fmt.Printf("GetHistory: Found %d records for userID=%d, processType=%s\n", len(histories), userID, processType)
+	for i, h := range histories {
+		fmt.Printf("GetHistory: Record %d - ID=%d, ProcessType=%s, CreatedAt=%v\n", i+1, h.ID, h.ProcessType, h.CreatedAt)
 	}
 
 	// Lấy process_status cho từng bản ghi
@@ -92,6 +103,14 @@ func GetHistory(c *gin.Context) {
 			CaptionHistory: h,
 			ProcessStatus:  status,
 		})
+	}
+
+	// Debug: Log the final result
+	fmt.Printf("GetHistory: Returning %d records in result\n", len(result))
+
+	// Ensure we always return an array, even if empty
+	if result == nil {
+		result = []HistoryWithStatus{}
 	}
 
 	c.JSON(http.StatusOK, result)
@@ -183,10 +202,18 @@ func DeleteHistory(c *gin.Context) {
 	userID := c.GetUint("user_id")
 	id := c.Param("id")
 	var history config.CaptionHistory
-	if err := config.Db.Where("id = ? AND user_id = ?", id, userID).First(&history).Error; err != nil {
+	if err := config.Db.Where("id = ? AND user_id = ? AND deleted_at IS NULL", id, userID).First(&history).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "History not found"})
 		return
 	}
+
+	// Soft delete - chỉ đánh dấu deleted_at, không xóa thực sự
+	now := time.Now()
+	if err := config.Db.Model(&history).Update("deleted_at", &now).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete history"})
+		return
+	}
+
 	// Xoá toàn bộ thư mục chứa video và tài nguyên liên quan
 	var videoDir string
 	if history.ProcessType == "tiktok-optimize" && history.VideoFilename != "" {
@@ -201,11 +228,8 @@ func DeleteHistory(c *gin.Context) {
 	if videoDir != "" && videoDir != "." && videoDir != "/" {
 		_ = os.RemoveAll(videoDir)
 	}
-	if err := config.Db.Delete(&history).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete history"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "History and storage deleted"})
+
+	c.JSON(http.StatusOK, gin.H{"message": "History deleted successfully"})
 }
 
 // Xoá nhiều history
@@ -222,4 +246,65 @@ func DeleteHistories(c *gin.Context) {
 		DeleteHistory(c)
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Batch delete completed"})
+}
+
+// GetUserVideoCount trả về tổng số video của user
+func GetUserVideoCount(c *gin.Context) {
+	userID := c.GetUint("user_id")
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	var count int64
+	if err := config.Db.Model(&config.CaptionHistory{}).Where("user_id = ? AND deleted_at IS NULL", userID).Count(&count).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get video count"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"total_videos": count,
+		"max_videos":   10,
+		"can_upload":   count < 10,
+	})
+}
+
+// GetUserVideoStats trả về thống kê chi tiết về video của user (bao gồm cả đã xóa)
+func GetUserVideoStats(c *gin.Context) {
+	userID := c.GetUint("user_id")
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Thống kê tổng quan
+	var totalCount, activeCount, deletedCount int64
+	var processTypeStats []struct {
+		ProcessType string `json:"process_type"`
+		Count       int64  `json:"count"`
+	}
+
+	// Đếm tổng số video (bao gồm cả đã xóa)
+	config.Db.Model(&config.CaptionHistory{}).Where("user_id = ?", userID).Count(&totalCount)
+
+	// Đếm video đang hoạt động
+	config.Db.Model(&config.CaptionHistory{}).Where("user_id = ? AND deleted_at IS NULL", userID).Count(&activeCount)
+
+	// Đếm video đã xóa
+	config.Db.Model(&config.CaptionHistory{}).Where("user_id = ? AND deleted_at IS NOT NULL", userID).Count(&deletedCount)
+
+	// Thống kê theo process type
+	config.Db.Model(&config.CaptionHistory{}).
+		Select("process_type, count(*) as count").
+		Where("user_id = ? AND deleted_at IS NULL", userID).
+		Group("process_type").
+		Scan(&processTypeStats)
+
+	c.JSON(http.StatusOK, gin.H{
+		"total_videos":       totalCount,
+		"active_videos":      activeCount,
+		"deleted_videos":     deletedCount,
+		"process_type_stats": processTypeStats,
+		"deletion_rate":      float64(deletedCount) / float64(totalCount) * 100, // Tỷ lệ xóa (%)
+	})
 }

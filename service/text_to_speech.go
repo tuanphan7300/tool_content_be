@@ -91,38 +91,70 @@ func TextToSpeech(text string, options TTSOptions) (string, error) {
 // parseSRT parses SRT content and returns a slice of SRTEntry
 func parseSRT(srtContent string) ([]SRTEntry, error) {
 	var entries []SRTEntry
-	blocks := strings.Split(srtContent, "\n\n")
 
-	for _, block := range blocks {
-		lines := strings.Split(strings.TrimSpace(block), "\n")
+	// Log first 200 characters for debugging
+	preview := srtContent
+	if len(preview) > 200 {
+		preview = preview[:200] + "..."
+	}
+	blocks := strings.Split(srtContent, "\n\n")
+	for i, block := range blocks {
+		block = strings.TrimSpace(block)
+		if block == "" {
+			continue
+		}
+
+		lines := strings.Split(block, "\n")
 		if len(lines) < 3 {
+			log.Printf("Block %d has insufficient lines: %d", i, len(lines))
 			continue
 		}
 
 		// Parse index
-		index, err := strconv.Atoi(lines[0])
+		index, err := strconv.Atoi(strings.TrimSpace(lines[0]))
 		if err != nil {
+			log.Printf("Block %d: failed to parse index '%s'", i, lines[0])
 			continue
 		}
 
 		// Parse timestamp
-		timestamp := strings.Split(lines[1], " --> ")
+		timestamp := strings.Split(strings.TrimSpace(lines[1]), " --> ")
 		if len(timestamp) != 2 {
+			log.Printf("Block %d: invalid timestamp format '%s'", i, lines[1])
 			continue
 		}
 
 		start, err := parseSRTTime(timestamp[0])
 		if err != nil {
+			log.Printf("Block %d: failed to parse start time '%s': %v", i, timestamp[0], err)
 			continue
 		}
 
 		end, err := parseSRTTime(timestamp[1])
 		if err != nil {
+			log.Printf("Block %d: failed to parse end time '%s': %v", i, timestamp[1], err)
 			continue
 		}
 
-		// Get text
-		text := strings.Join(lines[2:], " ")
+		// Get text - only lines after timestamp
+		var textLines []string
+		for j := 2; j < len(lines); j++ {
+			line := strings.TrimSpace(lines[j])
+			if line != "" {
+				textLines = append(textLines, line)
+			}
+		}
+		text := strings.Join(textLines, " ")
+		text = strings.TrimSpace(text)
+
+		// Skip if text is empty or contains only numbers/timestamps
+		if text == "" || isOnlyNumbersOrTimestamps(text) {
+			log.Printf("Block %d: Skipping invalid text: '%s'", i, text)
+			continue
+		}
+
+		// Debug: Log parsed text
+		log.Printf("Block %d: Parsed text: '%s'", i, text)
 
 		entries = append(entries, SRTEntry{
 			Index: index,
@@ -132,6 +164,7 @@ func parseSRT(srtContent string) ([]SRTEntry, error) {
 		})
 	}
 
+	log.Printf("Successfully parsed %d entries", len(entries))
 	return entries, nil
 }
 
@@ -170,8 +203,70 @@ func parseSRTTime(timeStr string) (float64, error) {
 	return float64(hours*3600+minutes*60+seconds) + float64(milliseconds)/1000, nil
 }
 
-// ConvertSRTToSpeech converts SRT content to speech and returns the audio file path
-func ConvertSRTToSpeech(srtContent string, videoDir string, speakingRate float64) (string, error) {
+// cleanSRTContent cleans SRT content to ensure proper parsing
+func cleanSRTContent(srtContent string) string {
+	// Normalize line endings
+	srtContent = strings.ReplaceAll(srtContent, "\r\n", "\n")
+	srtContent = strings.ReplaceAll(srtContent, "\r", "\n")
+
+	// Remove any BOM or special characters
+	srtContent = strings.TrimPrefix(srtContent, "\uFEFF") // Remove BOM
+
+	// Ensure proper spacing between blocks
+	srtContent = strings.ReplaceAll(srtContent, "\n\n\n", "\n\n")
+
+	return strings.TrimSpace(srtContent)
+}
+
+// isOnlyNumbersOrTimestamps checks if text contains only numbers or timestamp patterns
+func isOnlyNumbersOrTimestamps(text string) bool {
+	// Remove common punctuation and spaces
+	cleaned := strings.ReplaceAll(text, " ", "")
+	cleaned = strings.ReplaceAll(cleaned, ":", "")
+	cleaned = strings.ReplaceAll(cleaned, ",", "")
+	cleaned = strings.ReplaceAll(cleaned, ".", "")
+	cleaned = strings.ReplaceAll(cleaned, "-", "")
+	cleaned = strings.ReplaceAll(cleaned, "-->", "")
+
+	// Check if it's only digits
+	for _, r := range cleaned {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+
+	return len(cleaned) > 0
+}
+
+// getVoiceForLanguage maps language codes to Google TTS voice settings
+func getVoiceForLanguage(languageCode string) (string, string) {
+	voiceMap := map[string]struct {
+		LanguageCode string
+		VoiceName    string
+	}{
+		"vi": {"vi-VN", "vi-VN-Wavenet-C"},
+		"en": {"en-US", "en-US-Wavenet-F"},
+		"ja": {"ja-JP", "ja-JP-Wavenet-A"},
+		"ko": {"ko-KR", "ko-KR-Wavenet-A"},
+		"zh": {"cmn-CN", "cmn-CN-Wavenet-A"},
+		"fr": {"fr-FR", "fr-FR-Wavenet-A"},
+		"de": {"de-DE", "de-DE-Wavenet-A"},
+		"es": {"es-ES", "es-ES-Wavenet-A"},
+	}
+
+	if voice, exists := voiceMap[languageCode]; exists {
+		return voice.LanguageCode, voice.VoiceName
+	}
+
+	// Default to Vietnamese
+	return "vi-VN", "vi-VN-Wavenet-C"
+}
+
+// ConvertSRTToSpeechWithLanguage converts SRT content to speech with specified language
+func ConvertSRTToSpeechWithLanguage(srtContent string, videoDir string, speakingRate float64, targetLanguage string) (string, error) {
+	// Clean SRT content first
+	srtContent = cleanSRTContent(srtContent)
+
 	// Parse SRT content
 	entries, err := parseSRT(srtContent)
 	if err != nil {
@@ -187,11 +282,18 @@ func ConvertSRTToSpeech(srtContent string, videoDir string, speakingRate float64
 
 	// Initialize Google TTS client
 	ctx := context.Background()
+	log.Printf("Creating Google TTS client...")
 	client, err := texttospeech.NewClient(ctx, option.WithCredentialsFile("data/google_clound_tts_api.json"))
 	if err != nil {
+		log.Printf("Failed to create TTS client: %v", err)
 		return "", fmt.Errorf("failed to create TTS client: %v", err)
 	}
 	defer client.Close()
+	log.Printf("Google TTS client created successfully")
+
+	// Get voice settings for target language
+	languageCode, voiceName := getVoiceForLanguage(targetLanguage)
+	log.Printf("Using voice: %s (%s) for language: %s", voiceName, languageCode, targetLanguage)
 
 	// Create a temporary directory for segment files
 	tempDir, err := os.MkdirTemp("", "tts_segments")
@@ -200,91 +302,151 @@ func ConvertSRTToSpeech(srtContent string, videoDir string, speakingRate float64
 	}
 	defer os.RemoveAll(tempDir)
 
-	// Calculate total duration needed
-	totalDuration := entries[len(entries)-1].End
-	log.Printf("Total TTS duration needed: %.2f seconds", totalDuration)
-
-	// Create a silent base audio of total duration with consistent format
-	baseAudioFile := filepath.Join(tempDir, "base_silence.wav")
-	cmd := exec.Command("ffmpeg",
-		"-f", "lavfi",
-		"-i", fmt.Sprintf("anullsrc=r=44100:cl=stereo:d=%f", totalDuration),
-		"-ar", "44100",
-		"-ac", "2",
-		"-acodec", "pcm_s16le",
-		"-y",
-		baseAudioFile)
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		log.Printf("FFmpeg base silence error: %s", string(output))
-		return "", fmt.Errorf("failed to create base silence: %v", err)
-	}
-
-	// Use individual processing for all segments (batch processing causes audio overlap)
-	var segmentFiles []string
-	log.Printf("Using individual processing for %d segments", len(entries))
-	segmentFiles, err = processIndividualTTS(client, ctx, entries, tempDir, speakingRate)
-	if err != nil {
-		return "", err
-	}
-
-	// Dynamic segment handling based on count
-	totalSegments := len(segmentFiles)
-	log.Printf("Processing %d segments for TTS", totalSegments)
-
-	// For very large numbers of segments, use batch processing
-	if totalSegments > 200 {
-		log.Printf("Very large number of segments (%d), using batch processing", totalSegments)
-		return processSegmentsInBatches(segmentFiles, entries, baseAudioFile, outputPath, tempDir, totalDuration)
-	}
-
-	// For large numbers of segments, use progressive mixing
-	if totalSegments > 50 {
-		log.Printf("Large number of segments (%d), using progressive mixing", totalSegments)
-		return processSegmentsProgressive(segmentFiles, entries, baseAudioFile, outputPath, tempDir, totalDuration)
-	}
-
-	// For medium numbers of segments, use concat approach
-	if totalSegments > 20 {
-		log.Printf("Medium number of segments (%d), using concat approach", totalSegments)
-		return processSegmentsConcat(segmentFiles, entries, baseAudioFile, outputPath, tempDir, totalDuration)
-	}
-
-	// For small numbers of segments (≤20), use individual adelay filters
-	log.Printf("Small number of segments (%d), using individual adelay filters", totalSegments)
-
-	// Create individual delayed files first to avoid filter complexity issues
+	// TTS từng đoạn, căn chỉnh duration, adelay
 	var delayedFiles []string
-	for i, segmentFile := range segmentFiles {
-		delayedFile := filepath.Join(tempDir, fmt.Sprintf("delayed_%d.wav", i))
+	log.Printf("Processing %d SRT entries for TTS", len(entries))
+	for i, entry := range entries {
+		log.Printf("Processing segment %d: '%s' (%.2f -> %.2f)", i, entry.Text, entry.Start, entry.End)
 
-		// Create delayed segment using FFmpeg with volume boost
+		// Clean text trước khi gửi lên TTS
+		cleanText := strings.TrimSpace(entry.Text)
+		if cleanText == "" {
+			log.Printf("Segment %d: Empty text, skipping", i)
+			continue
+		}
+
+		log.Printf("Segment %d: Sending to TTS: '%s'", i, cleanText)
+
+		// TTS đoạn
+		req := texttospeechpb.SynthesizeSpeechRequest{
+			Input: &texttospeechpb.SynthesisInput{
+				InputSource: &texttospeechpb.SynthesisInput_Text{Text: cleanText},
+			},
+			Voice: &texttospeechpb.VoiceSelectionParams{
+				LanguageCode: languageCode,
+				Name:         voiceName,
+			},
+			AudioConfig: &texttospeechpb.AudioConfig{
+				AudioEncoding:   texttospeechpb.AudioEncoding_MP3,
+				SpeakingRate:    speakingRate,
+				SampleRateHertz: 44100,
+			},
+		}
+		resp, err := client.SynthesizeSpeech(ctx, &req)
+		if err != nil {
+			return "", fmt.Errorf("failed to synthesize speech for segment %d: %v", i, err)
+		}
+		segmentFile := filepath.Join(tempDir, fmt.Sprintf("segment_%d.mp3", i))
+		if err := os.WriteFile(segmentFile, resp.AudioContent, 0644); err != nil {
+			return "", fmt.Errorf("failed to save segment %d: %v", i, err)
+		}
+		// Convert to WAV
+		wavSegmentFile := filepath.Join(tempDir, fmt.Sprintf("segment_%d.wav", i))
 		cmd := exec.Command("ffmpeg",
 			"-i", segmentFile,
-			"-af", fmt.Sprintf("volume=2.0,adelay=%d|%d", int(entries[i].Start*1000), int(entries[i].Start*1000)),
+			"-af", "volume=2.0",
+			"-ar", "44100",
+			"-ac", "2",
+			"-acodec", "pcm_s16le",
+			"-y",
+			wavSegmentFile)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("FFmpeg segment conversion error: %s", string(output))
+			return "", fmt.Errorf("failed to convert segment %d to WAV: %v", i, err)
+		}
+		// Get actual duration
+		cmd = exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", wavSegmentFile)
+		durationStr, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("failed to get audio duration for segment %d: %v", i, err)
+		}
+		actualDuration, err := strconv.ParseFloat(strings.TrimSpace(string(durationStr)), 64)
+		if err != nil {
+			return "", fmt.Errorf("failed to parse audio duration for segment %d: %v", i, err)
+		}
+		expectedDuration := entry.End - entry.Start
+		adjustedWavFile := wavSegmentFile
+		if math.Abs(actualDuration-expectedDuration) > 0.05 {
+			adjustedWavFile = filepath.Join(tempDir, fmt.Sprintf("adjusted_segment_%d.wav", i))
+			if actualDuration < expectedDuration {
+				// Add silence
+				silenceDuration := expectedDuration - actualDuration
+				silenceFile := filepath.Join(tempDir, fmt.Sprintf("silence_%d.wav", i))
+				cmd := exec.Command("ffmpeg",
+					"-f", "lavfi",
+					"-i", fmt.Sprintf("anullsrc=r=44100:cl=stereo:d=%f", silenceDuration),
+					"-ar", "44100",
+					"-ac", "2",
+					"-acodec", "pcm_s16le",
+					"-y",
+					silenceFile)
+				output, err := cmd.CombinedOutput()
+				if err != nil {
+					log.Printf("FFmpeg silence creation error: %s", string(output))
+					return "", fmt.Errorf("failed to create silence for segment %d: %v", i, err)
+				}
+				// Concatenate segment with silence
+				cmd = exec.Command("ffmpeg",
+					"-i", wavSegmentFile,
+					"-i", silenceFile,
+					"-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1[a]",
+					"-map", "[a]",
+					"-ar", "44100",
+					"-ac", "2",
+					"-acodec", "pcm_s16le",
+					"-y",
+					adjustedWavFile)
+				output, err = cmd.CombinedOutput()
+				if err != nil {
+					log.Printf("FFmpeg concat error: %s", string(output))
+					return "", fmt.Errorf("failed to concat segment %d with silence: %v", i, err)
+				}
+			} else {
+				// Trim segment
+				cmd := exec.Command("ffmpeg",
+					"-i", wavSegmentFile,
+					"-t", fmt.Sprintf("%f", expectedDuration),
+					"-ar", "44100",
+					"-ac", "2",
+					"-acodec", "pcm_s16le",
+					"-y",
+					adjustedWavFile)
+				output, err := cmd.CombinedOutput()
+				if err != nil {
+					log.Printf("FFmpeg trim error: %s", string(output))
+					return "", fmt.Errorf("failed to trim segment %d: %v", i, err)
+				}
+			}
+		}
+		// Dùng adelay để căn đúng thời điểm bắt đầu
+		delayedFile := filepath.Join(tempDir, fmt.Sprintf("delayed_%d.wav", i))
+		cmd = exec.Command("ffmpeg",
+			"-i", adjustedWavFile,
+			"-af", fmt.Sprintf("adelay=%d|%d", int(entry.Start*1000), int(entry.Start*1000)),
 			"-ar", "44100",
 			"-ac", "2",
 			"-acodec", "pcm_s16le",
 			"-y",
 			delayedFile)
-
-		output, err := cmd.CombinedOutput()
+		output, err = cmd.CombinedOutput()
 		if err != nil {
 			log.Printf("FFmpeg delay error for segment %d: %s", i, string(output))
-			continue
+			return "", fmt.Errorf("failed to delay segment %d: %v", i, err)
 		}
 		delayedFiles = append(delayedFiles, delayedFile)
 	}
 
-	// Mix all delayed files with base silence
+	// Mix all delayed files
 	if len(delayedFiles) > 0 {
-		args := []string{"-i", baseAudioFile}
-		for _, delayedFile := range delayedFiles {
+		args := []string{"-i"}
+		args = append(args, delayedFiles[0])
+		for _, delayedFile := range delayedFiles[1:] {
 			args = append(args, "-i", delayedFile)
 		}
+		filter := fmt.Sprintf("amix=inputs=%d:duration=longest:normalize=0[out]", len(delayedFiles))
 		args = append(args,
-			"-filter_complex", fmt.Sprintf("amix=inputs=%d:duration=longest:normalize=0[out]", len(delayedFiles)+1),
+			"-filter_complex", filter,
 			"-map", "[out]",
 			"-ar", "44100",
 			"-ac", "2",
@@ -292,14 +454,12 @@ func ConvertSRTToSpeech(srtContent string, videoDir string, speakingRate float64
 			"-b:a", "192k",
 			"-y",
 			outputPath)
-
 		cmd := exec.Command("ffmpeg", args...)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			log.Printf("FFmpeg final mix error: %s", string(output))
 			return "", fmt.Errorf("failed to create final TTS audio: %v", err)
 		}
-
 		log.Printf("TTS audio created successfully: %s", outputPath)
 		return outputPath, nil
 	} else {

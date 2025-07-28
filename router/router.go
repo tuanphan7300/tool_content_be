@@ -12,6 +12,9 @@ func SetupRoutes(r *gin.Engine) {
 	r.POST("/register", handler.RegisterHandler)
 	r.POST("/login", handler.LoginHandler)
 	r.GET("/ping", handler.PingPongHandler)
+	
+	// Health check routes
+	r.GET("/health", handler.HealthCheckHandler)
 
 	// Google OAuth routes
 	r.GET("/auth/google/login", handler.GoogleLoginHandler)
@@ -23,7 +26,7 @@ func SetupRoutes(r *gin.Engine) {
 	{
 		protected.GET("/user/profile", handler.GetUserProfileHandler)
 		protected.POST("/upload", handler.UploadHandler)
-		protected.POST("/process", handler.ProcessHandler)
+		protected.POST("/process", middleware.ProcessAnyStatusMiddleware(), handler.ProcessHandler)
 		protected.POST("/generate-caption", handler.GenerateCaptionHandler)
 		protected.POST("/tiktok-optimize", handler.TikTokOptimizerHandler)
 		protected.GET("/caption/:id", handler.CaptionHandler)
@@ -33,10 +36,14 @@ func SetupRoutes(r *gin.Engine) {
 		protected.GET("/history/:id", handler.GetHistoryByID)
 		protected.DELETE("/history/:id", handler.DeleteHistory)
 		protected.DELETE("/history", handler.DeleteHistories)
+		protected.GET("/user/video-count", handler.GetUserVideoCount)
+		protected.GET("/user/video-stats", handler.GetUserVideoStats)
 		protected.POST("/process-voice", handler.ProcessVoiceHandler)
 		protected.POST("/process-background", handler.ProcessBackgroundMusicHandler)
-		protected.POST("/process-video", middleware.ProcessStatusMiddleware("process-video"), handler.ProcessVideoHandler)
+		protected.POST("/process-video", middleware.ProcessAnyStatusMiddleware(), middleware.ProcessStatusMiddleware("process-video"), handler.ProcessVideoHandler)
 		protected.POST("/text-to-speech", handler.TextToSpeechHandler)
+		protected.POST("/burn-sub", middleware.ProcessAnyStatusMiddleware(), handler.BurnSubHandler)
+		protected.POST("/create-subtitle", middleware.ProcessAnyStatusMiddleware(), middleware.ProcessStatusMiddleware("create-subtitle"), handler.CreateSubtitleHandler)
 
 		// Credit endpoints (new system)
 		protected.GET("/credit/balance", handler.GetCreditBalance)

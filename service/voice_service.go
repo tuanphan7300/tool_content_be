@@ -276,4 +276,36 @@ func MergeVideoWithAudio(videoPath, backgroundMusicPath, ttsPath, videoDir strin
 	return outputPath, nil
 }
 
+// BurnSubtitleWithBackground burns subtitle into video with black background
+func BurnSubtitleWithBackground(videoPath, srtPath, outputDir string) (string, error) {
+	// Create output directory if it doesn't exist
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create output directory: %v", err)
+	}
+
+	// Generate output filename with timestamp
+	timestamp := time.Now().Format("20060102_150405")
+	outputPath := filepath.Join(outputDir, fmt.Sprintf("burned_%s.mp4", timestamp))
+
+	// FFmpeg command to burn subtitle with black background
+	// -vf "subtitles=subtitle.srt:force_style='Fontsize=24,PrimaryColour=&Hffffff,OutlineColour=&H000000,BackColour=&H000000,Outline=2,Shadow=1'"
+	cmd := exec.Command("ffmpeg",
+		"-i", videoPath,
+		"-vf", fmt.Sprintf("subtitles=%s:force_style='Fontsize=24,PrimaryColour=&Hffffff,OutlineColour=&H000000,BackColour=&H000000,Outline=2,Shadow=1'", srtPath),
+		"-c:a", "copy", // Copy audio without re-encoding
+		"-y", // Overwrite output file
+		outputPath,
+	)
+
+	// Capture command output for better error handling
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("FFmpeg burn subtitle error: %s", string(output))
+		return "", fmt.Errorf("failed to burn subtitle: %v, output: %s", err, string(output))
+	}
+
+	log.Printf("FFmpeg burn subtitle output: %s", string(output))
+	return outputPath, nil
+}
+
 

@@ -68,3 +68,33 @@ func ProcessStatusMiddleware(processType string) gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// ProcessAnyStatusMiddleware kiểm tra nếu user có bất kỳ process nào đang chạy
+func ProcessAnyStatusMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := c.GetUint("user_id")
+		if userID == 0 {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			c.Abort()
+			return
+		}
+
+		processService := service.NewProcessStatusService()
+		activeProcesses, err := processService.GetUserActiveProcesses(userID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			c.Abort()
+			return
+		}
+		if len(activeProcesses) > 0 {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":            "Bạn đang có một quá trình xử lý khác đang chạy. Vui lòng đợi hoàn thành trước khi thực hiện thao tác mới.",
+				"active_processes": activeProcesses,
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}

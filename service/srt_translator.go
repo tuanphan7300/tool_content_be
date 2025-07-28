@@ -2,10 +2,11 @@ package service
 
 import (
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"os"
 	"strconv"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // TranslateSRTFile translates an SRT file from Chinese to Vietnamese using Gemini
@@ -227,6 +228,67 @@ Kiểm tra cuối cùng: Trước khi xuất kết quả, hãy tự kiểm tra l
 
 File SRT gốc:
 ` + string(srtContent)
+
+	// Call Gemini API
+	translatedContent, err := GenerateWithGemini(prompt, apiKey, modelName)
+	if err != nil {
+		return "", fmt.Errorf("failed to translate SRT with Gemini: %v", err)
+	}
+
+	// Clean up the response - remove any extra text that might be added by Gemini
+	translatedContent = strings.TrimSpace(translatedContent)
+
+	// If Gemini added any prefix or explanation, try to extract just the SRT content
+	if strings.Contains(translatedContent, "1\n") {
+		// Find the start of the SRT content
+		startIndex := strings.Index(translatedContent, "1\n")
+		if startIndex != -1 {
+			translatedContent = translatedContent[startIndex:]
+		}
+	}
+
+	return translatedContent, nil
+}
+
+// TranslateSRTFileWithModelAndLanguage dịch SRT với modelName động và ngôn ngữ đích
+func TranslateSRTFileWithModelAndLanguage(srtFilePath, apiKey, modelName, targetLanguage string) (string, error) {
+	// Read the original SRT file
+	log.Infof("sử dụng model gemini %s để dịch sang %s", modelName, targetLanguage)
+	srtContent, err := os.ReadFile(srtFilePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read SRT file: %v", err)
+	}
+
+	// Map language codes to language names
+	languageNames := map[string]string{
+		"vi": "tiếng Việt",
+		"en": "tiếng Anh",
+		"ja": "tiếng Nhật",
+		"ko": "tiếng Hàn",
+		"zh": "tiếng Trung",
+		"fr": "tiếng Pháp",
+		"de": "tiếng Đức",
+		"es": "tiếng Tây Ban Nha",
+	}
+
+	targetLangName := languageNames[targetLanguage]
+	if targetLangName == "" {
+		targetLangName = "tiếng Việt" // Default to Vietnamese
+	}
+
+	// Create the prompt for Gemini with dynamic target language
+	prompt := fmt.Sprintf(`Hãy dịch file SRT sang %s.
+
+TUÂN THỦ NGHIÊM NGẶT CÁC QUY TẮC SAU:
+
+QUY TẮC QUAN TRỌNG NHẤT: Giữ nguyên 100%% số thứ tự và dòng thời gian (timestamps) từ file gốc. TUYỆT ĐỐI KHÔNG được thay đổi, làm tròn, hay "sửa lỗi" thời gian. Dòng thời gian phải được sao chép y hệt.
+
+Về nội dung: Dịch tự nhiên, truyền cảm, phù hợp với văn nói. Rút gọn các câu quá dài để khớp với thời gian hiển thị.
+
+Kiểm tra cuối cùng: Trước khi xuất kết quả, hãy tự kiểm tra lại để chắc chắn không có dòng thời gian nào bị sai lệch.
+
+File SRT gốc:
+%s`, targetLangName, string(srtContent))
 
 	// Call Gemini API
 	translatedContent, err := GenerateWithGemini(prompt, apiKey, modelName)

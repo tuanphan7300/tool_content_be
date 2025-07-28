@@ -20,15 +20,19 @@ func GetCreditBalance(c *gin.Context) {
 	}
 
 	creditService := service.NewCreditService()
-	balance, err := creditService.GetUserCreditBalance(userID)
+	balanceMap, err := creditService.GetUserCreditBalance(userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get credit balance"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get credit balance", "warning": "Không thể lấy số dư tài khoản. Vui lòng thử lại hoặc liên hệ hỗ trợ!"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"balance":  balance,
-		"currency": "USD",
+		"balance":           balanceMap["available_credits"],
+		"total_credits":     balanceMap["total_credits"],
+		"used_credits":      balanceMap["used_credits"],
+		"locked_credits":    balanceMap["locked_credits"],
+		"available_credits": balanceMap["available_credits"],
+		"currency":          "USD",
 	})
 }
 
@@ -51,7 +55,7 @@ func GetCreditHistory(c *gin.Context) {
 	// Lấy danh sách transaction type = 'deduct' có video_id
 	transactions, err := creditService.GetTransactionHistory(userID, 1000) // lấy nhiều để group
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get transaction history"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get transaction history", "warning": "Không thể lấy lịch sử giao dịch. Vui lòng thử lại hoặc liên hệ hỗ trợ!"})
 		return
 	}
 
@@ -139,7 +143,7 @@ func AddCredits(c *gin.Context) {
 	creditService := service.NewCreditService()
 	err := creditService.AddCredits(userID, req.Amount, req.Description, req.ReferenceID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add credits"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add credits", "warning": "Không thể nạp credit. Vui lòng thử lại hoặc liên hệ hỗ trợ!"})
 		return
 	}
 
@@ -149,6 +153,7 @@ func AddCredits(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Credits added successfully",
 			"amount":  req.Amount,
+			"warning": "Không thể lấy số dư mới. Vui lòng kiểm tra lại tài khoản!",
 		})
 		return
 	}
@@ -198,7 +203,7 @@ func EstimateCost(c *gin.Context) {
 	creditService := service.NewCreditService()
 	estimates, err := creditService.EstimateTotalCost(req.DurationMinutes, req.TranscriptLength, req.SrtLength)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to estimate cost"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to estimate cost", "warning": "Không thể ước tính chi phí. Vui lòng thử lại hoặc liên hệ hỗ trợ!"})
 		return
 	}
 
@@ -206,6 +211,15 @@ func EstimateCost(c *gin.Context) {
 	balance, err := creditService.GetUserCreditBalance(userID)
 	if err != nil {
 		balance = map[string]float64{"available_credits": 0}
+		// Cảnh báo nếu không lấy được số dư
+		c.JSON(http.StatusOK, gin.H{
+			"estimates":          estimates,
+			"user_balance":       balance,
+			"sufficient_credits": false,
+			"currency":           "USD",
+			"warning":            "Không thể lấy số dư tài khoản. Vui lòng kiểm tra lại tài khoản hoặc liên hệ hỗ trợ!",
+		})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{

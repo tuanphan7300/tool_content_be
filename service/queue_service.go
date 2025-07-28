@@ -11,16 +11,21 @@ import (
 )
 
 type AudioProcessingJob struct {
-	ID          string  `json:"id"`
-	AudioPath   string  `json:"audio_path"`
-	FileName    string  `json:"file_name"`
-	VideoDir    string  `json:"video_dir"`
-	StemType    string  `json:"stem_type"` // "vocals" or "no_vocals"
-	CreatedAt   int64   `json:"created_at"`
-	UserID      uint    `json:"user_id"`
-	VideoID     uint    `json:"video_id"`
-	Priority    int     `json:"priority"`     // 1-10, 10 là cao nhất
-	MaxDuration float64 `json:"max_duration"` // Giới hạn thời gian xử lý
+	ID              string  `json:"id"`
+	AudioPath       string  `json:"audio_path"`
+	FileName        string  `json:"file_name"`
+	VideoDir        string  `json:"video_dir"`
+	StemType        string  `json:"stem_type"` // "vocals" or "no_vocals"
+	CreatedAt       int64   `json:"created_at"`
+	UserID          uint    `json:"user_id"`
+	VideoID         uint    `json:"video_id"`
+	Priority        int     `json:"priority"`     // 1-10, 10 là cao nhất
+	MaxDuration     float64 `json:"max_duration"` // Giới hạn thời gian xử lý
+	JobType         string  `json:"job_type"`     // "demucs", "burn-sub"...
+	SubtitlePath    string  `json:"subtitle_path"`
+	OutputPath      string  `json:"output_path"`
+	SubtitleColor   string  `json:"subtitle_color"`
+	SubtitleBgColor string  `json:"subtitle_bgcolor"`
 }
 
 type QueueService struct {

@@ -105,7 +105,7 @@ func TextToSpeechHandler(c *gin.Context) {
 		float64(len([]rune(req.Text))),
 	)
 	if err != nil {
-		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ credit cho TTS"})
+		c.JSON(http.StatusPaymentRequired, gin.H{"error": "Không đủ credit để sử dụng TTS", "warning": "Số dư tài khoản của bạn không đủ để sử dụng dịch vụ này. Vui lòng nạp thêm credit để tiếp tục sử dụng!"})
 		return
 	}
 

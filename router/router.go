@@ -8,11 +8,14 @@ import (
 )
 
 func SetupRoutes(r *gin.Engine) {
+	// Add database middleware to all routes
+	r.Use(middleware.DatabaseMiddleware())
+
 	// Public routes
 	r.POST("/register", handler.RegisterHandler)
 	r.POST("/login", handler.LoginHandler)
 	r.GET("/ping", handler.PingPongHandler)
-	
+
 	// Health check routes
 	r.GET("/health", handler.HealthCheckHandler)
 
@@ -62,6 +65,23 @@ func SetupRoutes(r *gin.Engine) {
 		protected.GET("/queue/job/:job_id/wait", handler.WaitForJobCompletion)
 		protected.POST("/queue/worker/start", handler.StartWorkerService)
 		protected.POST("/queue/worker/stop", handler.StopWorkerService)
+	}
+
+	// Admin routes
+	admin := r.Group("/admin")
+	{
+		admin.POST("/login", handler.AdminLoginHandler)
+
+		// Protected admin routes
+		adminProtected := admin.Group("/")
+		adminProtected.Use(middleware.AdminAuthMiddleware())
+		{
+			adminProtected.GET("/dashboard", handler.AdminDashboardHandler)
+			adminProtected.GET("/users", handler.AdminUsersHandler)
+			adminProtected.GET("/process-status", handler.AdminProcessStatusHandler)
+			adminProtected.POST("/process-status/:id", handler.AdminUpdateProcessStatusHandler)
+			adminProtected.GET("/upload-history", handler.AdminUploadHistoryHandler)
+		}
 	}
 
 	// Serve static files

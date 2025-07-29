@@ -213,3 +213,24 @@ type ServiceConfig struct {
 func (ServiceConfig) TableName() string {
 	return "service_config"
 }
+
+// AdminUser represents admin user structure
+type AdminUser struct {
+	ID            int            `json:"id" gorm:"primaryKey"`
+	Username      string         `json:"username" gorm:"uniqueIndex"`
+	PasswordHash  string         `json:"password_hash"`
+	Email         string         `json:"email" gorm:"uniqueIndex"`
+	Name          string         `json:"name"`
+	Role          string         `json:"role" gorm:"type:enum('super_admin','admin','moderator');default:'admin'"`
+	IsActive      bool           `json:"is_active" gorm:"default:true"`
+	Permissions   datatypes.JSON `json:"permissions" gorm:"type:json"`
+	LoginAttempts int            `json:"login_attempts" gorm:"default:0"`
+	LockedUntil   *time.Time     `json:"locked_until"`
+	LastLogin     *time.Time     `json:"last_login"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+}
+
+func (AdminUser) TableName() string {
+	return "admin_users"
+}

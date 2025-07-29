@@ -48,3 +48,13 @@ func AuthMiddleware() gin.HandlerFunc {
 		}
 	}
 }
+
+// DatabaseMiddleware adds database connection to context
+func DatabaseMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Get database connection from config
+		db := config.Db
+		c.Set("db", db)
+		c.Next()
+	}
+}

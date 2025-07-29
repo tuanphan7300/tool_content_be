@@ -1053,3 +1053,16 @@ func mergeSegments(segments []SRTEntry) SRTEntry {
 		Text:  combinedText,
 	}
 }
+
+// ConvertSRTToSpeechWithService wrapper function that uses service_config to determine which TTS service to use
+func ConvertSRTToSpeechWithService(srtContent string, videoDir string, speakingRate float64, targetLanguage string, serviceName string, modelAPIName string) (string, error) {
+	// Currently only Google TTS (tts_wavenet) is supported for text_to_speech
+	if serviceName == "tts_wavenet" {
+		return ConvertSRTToSpeechWithLanguage(srtContent, videoDir, speakingRate, targetLanguage)
+	}
+
+	// For future services, we can add more conditions here
+	// Example: if serviceName == "azure_tts" { return ConvertSRTToSpeechWithAzure(srtContent, videoDir, speakingRate, targetLanguage, modelAPIName) }
+
+	return "", fmt.Errorf("unsupported text-to-speech service: %s", serviceName)
+}

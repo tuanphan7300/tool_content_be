@@ -41,7 +41,7 @@ CREATE TABLE `service_config` (
 
 LOCK TABLES `service_config` WRITE;
 /*!40000 ALTER TABLE `service_config` DISABLE KEYS */;
-INSERT INTO `service_config` VALUES (1,'srt_translation','gemini_1.5_flash',1,NULL,'2025-07-12 10:00:00','2025-07-11 17:45:23'),(2,'srt_translation','gemini_2.5_pro',0,NULL,'2025-07-12 10:00:00','2025-07-11 17:34:05'),(3,'speech_to_text	','whisper',1,NULL,'2025-07-12 10:00:00','2025-07-12 10:00:00'),(4,'text_to_speech','tts_wavenet',1,NULL,'2025-07-12 10:00:00','2025-07-12 10:00:00'),(5,'srt_translation','gemini_2.0_flash',0,NULL,'2025-07-12 10:00:00','2025-07-11 17:45:23');
+INSERT INTO `service_config` VALUES (1,'srt_translation','gemini_1.5_flash',1,NULL,'2025-07-12 10:00:00','2025-07-11 17:45:23'),(2,'srt_translation','gemini_2.5_pro',0,NULL,'2025-07-12 10:00:00','2025-07-11 17:34:05'),(3,'speech_to_text	','whisper',1,NULL,'2025-07-12 10:00:00','2025-07-12 10:00:00'),(4,'text_to_speech','tts_wavenet',1,NULL,'2025-07-12 10:00:00','2025-07-12 10:00:00'),(5,'srt_translation','gemini_2.0_flash',0,NULL,'2025-07-12 10:00:00','2025-07-11 17:45:23'),(6,'caption_generation','gpt_3.5_turbo',1,NULL,'2025-07-12 10:00:00','2025-07-12 10:00:00');
 /*!40000 ALTER TABLE `service_config` ENABLE KEYS */;
 UNLOCK TABLES;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;

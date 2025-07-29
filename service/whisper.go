@@ -467,3 +467,16 @@ func TranscribeWhisperOpenAI(filePath, apiKey string) (string, []Segment, *Whisp
 
 	return strings.TrimSpace(splitText.String()), cleanedSegments, whisperResp.Usage, nil
 }
+
+// TranscribeWithService wrapper function that uses service_config to determine which service to use
+func TranscribeWithService(filePath, apiKey, serviceName, modelAPIName string) (string, []Segment, *WhisperUsage, error) {
+	// Currently only Whisper is supported for speech_to_text
+	if serviceName == "whisper" {
+		return TranscribeWhisperOpenAI(filePath, apiKey)
+	}
+
+	// For future services, we can add more conditions here
+	// Example: if serviceName == "azure_speech" { return TranscribeWithAzure(filePath, apiKey, modelAPIName) }
+
+	return "", nil, nil, fmt.Errorf("unsupported speech-to-text service: %s", serviceName)
+}

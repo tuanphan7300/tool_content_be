@@ -147,3 +147,16 @@ func GenerateTikTokOptimization(prompt, apiKey string) (string, error) {
 
 	return "", fmt.Errorf("No response from GPT")
 }
+
+// GenerateCaptionWithService wrapper function that uses service_config to determine which service to use
+func GenerateCaptionWithService(transcript, apiKey, serviceName, modelAPIName string) (string, error) {
+	// Currently only GPT-3.5-turbo is supported for caption_generation
+	if serviceName == "gpt_3.5_turbo" {
+		return GenerateSuggestion(transcript, apiKey)
+	}
+
+	// For future services, we can add more conditions here
+	// Example: if serviceName == "claude" { return GenerateCaptionWithClaude(transcript, apiKey, modelAPIName) }
+
+	return "", fmt.Errorf("unsupported caption generation service: %s", serviceName)
+}

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"creator-tool-backend/config"
+	"creator-tool-backend/service"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -97,6 +98,7 @@ func GoogleCallbackHandler(c *gin.Context) {
 
 	// Check if user exists
 	user, err := GetUserByGoogleID(c, userInfo.ID)
+	isNewUser := false
 	if err != nil {
 		// User doesn't exist, create new user
 		user, err = CreateGoogleUser(c, userInfo)
@@ -104,6 +106,7 @@ func GoogleCallbackHandler(c *gin.Context) {
 			c.JSON(500, gin.H{"error": "Failed to create user"})
 			return
 		}
+		isNewUser = true
 	}
 
 	// Generate JWT token
@@ -135,14 +138,24 @@ func GoogleCallbackHandler(c *gin.Context) {
 				
 				// Close popup and notify parent
 				if (window.opener) {
-					window.opener.postMessage({ type: 'GOOGLE_AUTH_SUCCESS', token: '%s' }, '*');
+					window.opener.postMessage({ 
+						type: 'GOOGLE_AUTH_SUCCESS', 
+						token: '%s',
+						isNewUser: %t
+					}, '*');
 				}
 				window.close();
 			</script>
 			<p>Authentication successful! You can close this window.</p>
+			%s
 		</body>
 		</html>
-	`, tokenString, userInfo.Email, tokenString)
+	`, tokenString, userInfo.Email, tokenString, isNewUser, func() string {
+		if isNewUser {
+			return "<p style='color: green;'>Chào mừng! Bạn đã được tặng 1 credit cho lần đăng nhập đầu tiên.</p>"
+		}
+		return ""
+	}())
 
 	c.Header("Content-Type", "text/html")
 	c.String(200, html)
@@ -195,6 +208,10 @@ func CreateGoogleUser(c *gin.Context, userInfo *GoogleUserInfo) (config.Users, e
 	if result.Error != nil {
 		return user, result.Error
 	}
+
+	// Tặng credit cho user lần đầu đăng nhập bằng Google
+	creditService := service.NewCreditService()
+	_ = creditService.AddCredits(user.ID, 1, "Tặng credit đăng nhập Google lần đầu", "google_first_login")
 
 	return user, nil
 }

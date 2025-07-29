@@ -98,7 +98,7 @@ type AdminUploadListItem struct {
 func AdminLoginHandler(c *gin.Context) {
 	var req AdminLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Dữ liệu yêu cầu không hợp lệ"})
 		return
 	}
 
@@ -110,19 +110,19 @@ func AdminLoginHandler(c *gin.Context) {
 	err := db.Where("username = ? AND is_active = ?", req.Username, true).First(&admin).Error
 
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Tên đăng nhập hoặc mật khẩu không đúng"})
 		return
 	}
 
 	// Check if account is locked
 	if admin.LockedUntil != nil && admin.LockedUntil.After(time.Now()) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Account is temporarily locked"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Tài khoản tạm thời bị khóa"})
 		return
 	}
 
 	// Verify password
 	if err := bcrypt.CompareHashAndPassword([]byte(admin.PasswordHash), []byte(req.Password)); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Tên đăng nhập hoặc mật khẩu không đúng"})
 		return
 	}
 
@@ -133,7 +133,7 @@ func AdminLoginHandler(c *gin.Context) {
 	// Generate JWT token
 	token, expiresAt, err := generateAdminJWT(admin.ID, admin.Username, admin.Role)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo token"})
 		return
 	}
 
@@ -169,53 +169,53 @@ func AdminDashboardHandler(c *gin.Context) {
 	// Get total users
 	err := db.Model(&config.Users{}).Count(&stats.TotalUsers).Error
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user stats"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy thống kê người dùng"})
 		return
 	}
 
 	// Get active users (logged in last 30 days)
-	err = db.Model(&config.Users{}).Where("updated_at > ?", time.Now().AddDate(0, 0, -30)).Count(&stats.ActiveUsers).Error
+	err = db.Model(&config.Users{}).Where("created_at > ?", time.Now().AddDate(0, 0, -30)).Count(&stats.ActiveUsers).Error
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get active user stats"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy thống kê người dùng hoạt động"})
 		return
 	}
 
 	// Get process stats
 	err = db.Model(&config.UserProcessStatus{}).Count(&stats.TotalProcesses).Error
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get process stats"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy thống kê quy trình"})
 		return
 	}
 
 	err = db.Model(&config.UserProcessStatus{}).Where("status = ?", "processing").Count(&stats.ProcessingProcesses).Error
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get processing stats"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy thống kê đang xử lý"})
 		return
 	}
 
 	err = db.Model(&config.UserProcessStatus{}).Where("status = ?", "completed").Count(&stats.CompletedProcesses).Error
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get completed stats"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy thống kê hoàn thành"})
 		return
 	}
 
 	err = db.Model(&config.UserProcessStatus{}).Where("status = ?", "failed").Count(&stats.FailedProcesses).Error
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get failed stats"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy thống kê thất bại"})
 		return
 	}
 
 	// Get upload stats
 	err = db.Model(&config.CaptionHistory{}).Count(&stats.TotalUploads).Error
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get upload stats"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy thống kê tải lên"})
 		return
 	}
 
 	// Get total credits
 	err = db.Model(&config.UserCredits{}).Select("COALESCE(SUM(total_credits), 0)").Scan(&stats.TotalCredits).Error
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get credit stats"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy thống kê tín dụng"})
 		return
 	}
 
@@ -247,7 +247,7 @@ func AdminUsersHandler(c *gin.Context) {
 	// Get users with pagination
 	err := query.Order("created_at DESC").Limit(limit).Offset(offset).Find(&users).Error
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch users"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tải danh sách người dùng"})
 		return
 	}
 
@@ -312,7 +312,7 @@ func AdminProcessStatusHandler(c *gin.Context) {
 	// Get processes with pagination
 	err := query.Order("created_at DESC").Limit(limit).Offset(offset).Find(&processes).Error
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch process statuses"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tải trạng thái quy trình"})
 		return
 	}
 
@@ -356,7 +356,7 @@ func AdminUpdateProcessStatusHandler(c *gin.Context) {
 	status := c.PostForm("status")
 
 	if status == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Status is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Trạng thái là bắt buộc"})
 		return
 	}
 
@@ -371,7 +371,7 @@ func AdminUpdateProcessStatusHandler(c *gin.Context) {
 	}
 
 	if !isValid {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid status"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Trạng thái không hợp lệ"})
 		return
 	}
 
@@ -379,7 +379,7 @@ func AdminUpdateProcessStatusHandler(c *gin.Context) {
 	var process config.UserProcessStatus
 	err := db.First(&process, processID).Error
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Process not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy quy trình"})
 		return
 	}
 
@@ -398,11 +398,11 @@ func AdminUpdateProcessStatusHandler(c *gin.Context) {
 
 	err = db.Model(&process).Updates(updates).Error
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update process status"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể cập nhật trạng thái quy trình"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Process status updated successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "Cập nhật trạng thái quy trình thành công"})
 }
 
 // AdminUploadHistoryHandler returns upload history
@@ -435,7 +435,7 @@ func AdminUploadHistoryHandler(c *gin.Context) {
 	// Get uploads with pagination
 	err := query.Order("created_at DESC").Limit(limit).Offset(offset).Find(&uploads).Error
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch upload history"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tải lịch sử tải lên"})
 		return
 	}
 

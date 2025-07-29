@@ -63,12 +63,12 @@ func BurnSubHandler(c *gin.Context) {
 	videoFile, err := c.FormFile("video")
 	if err != nil {
 		creditService.UnlockCredits(userID, burnSubPricing.PricePerUnit, "burn-sub", "Unlock due to missing video file", nil)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing video file"})
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
 		return
 	}
 	if videoFile.Size > 100*1024*1024 {
 		creditService.UnlockCredits(userID, burnSubPricing.PricePerUnit, "burn-sub", "Unlock due to file size limit", nil)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ hỗ trợ file tối đa 100MB."})
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileTooLarge, nil)
 		return
 	}
 
@@ -76,7 +76,7 @@ func BurnSubHandler(c *gin.Context) {
 	subFile, err := c.FormFile("subtitle")
 	if err != nil {
 		creditService.UnlockCredits(userID, burnSubPricing.PricePerUnit, "burn-sub", "Unlock due to missing subtitle file", nil)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing subtitle file (.srt/.ass)"})
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
 		return
 	}
 	if !(strings.HasSuffix(subFile.Filename, ".srt") || strings.HasSuffix(subFile.Filename, ".ass")) {

@@ -32,12 +32,12 @@ func ProcessHandler(c *gin.Context) {
 
 	file, err := c.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "File upload error"})
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
 		return
 	}
 	// Kiểm tra kích thước file không quá 100MB
 	if file.Size > 100*1024*1024 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ hỗ trợ file tối đa 100MB."})
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileTooLarge, nil)
 		return
 	}
 
@@ -47,36 +47,57 @@ func ProcessHandler(c *gin.Context) {
 	uniqueName := fmt.Sprintf("%d_%s%s", timestamp, baseName, filepath.Ext(file.Filename))
 	videoDir := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName)))
 	if err := os.MkdirAll(videoDir, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create video directory"})
+		util.HandleError(c, http.StatusInternalServerError, util.ErrDirectoryCreation, err)
 		return
 	}
 	videoPath := filepath.Join(videoDir, uniqueName)
 	if err := c.SaveUploadedFile(file, videoPath); err != nil {
 		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save video file"})
+		util.HandleError(c, http.StatusInternalServerError, util.ErrFileUploadFailed, err)
 		return
 	}
 	// Tách audio từ video vào đúng thư mục
 	audioPath, err := util.ProcessfileToDir(c, file, videoDir)
 	if err != nil {
 		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract audio"})
+		util.HandleError(c, http.StatusInternalServerError, util.ErrProcessingFailed, err)
 		return
 	}
 	// Kiểm tra duration < 7 phút
 	duration, _ := util.GetAudioDuration(audioPath)
 	if duration > 420 {
 		util.CleanupDir(videoDir)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 7 phút."})
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileDurationTooLong, nil)
 		return
 	}
-	// Gọi Whisper để lấy transcript và usage thực tế
-	transcript, segments, whisperUsage, err := service.TranscribeWhisperOpenAI(audioPath, apiKey)
+
+	// Khởi tạo services
+	pricingService := service.NewPricingService()
+
+	// Lấy service config cho speech_to_text (Whisper)
+	whisperServiceName, whisperModelAPIName, err := pricingService.GetActiveServiceForType("speech_to_text")
 	if err != nil {
 		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Whisper error"})
+		util.HandleError(c, http.StatusInternalServerError, util.ErrServiceUnavailable, err)
 		return
 	}
+
+	// Lấy service config cho caption_generation (GPT)
+	gptServiceName, gptModelAPIName, err := pricingService.GetActiveServiceForType("caption_generation")
+	if err != nil {
+		util.CleanupDir(videoDir)
+		util.HandleError(c, http.StatusInternalServerError, util.ErrServiceUnavailable, err)
+		return
+	}
+
+	// Gọi Whisper để lấy transcript và usage thực tế
+	transcript, segments, whisperUsage, err := service.TranscribeWithService(audioPath, apiKey, whisperServiceName, whisperModelAPIName)
+	if err != nil {
+		util.CleanupDir(videoDir)
+		util.HandleError(c, http.StatusInternalServerError, util.ErrProcessingFailed, err)
+		return
+	}
+
 	// Trừ token đúng usage thực tế
 	whisperTokens := 0
 	if whisperUsage != nil && whisperUsage.TotalTokens > 0 {
@@ -88,6 +109,7 @@ func ProcessHandler(c *gin.Context) {
 			whisperTokens = 6
 		}
 	}
+
 	// Lưu history trước để lấy video_id
 	jsonData, _ := json.Marshal(segments)
 	captionHistory := config.CaptionHistory{
@@ -101,12 +123,14 @@ func ProcessHandler(c *gin.Context) {
 	}
 	if err := config.Db.Create(&captionHistory).Error; err != nil {
 		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save history"})
+		util.HandleError(c, http.StatusInternalServerError, util.ErrDatabaseOperation, err)
 		return
 	}
+
 	// Giới hạn 10 action gần nhất cho user
 	processService := service.NewProcessStatusService()
 	_ = processService.LimitUserCaptionHistories(userID)
+
 	// Lấy tổng số action hiện tại
 	var count int64
 	config.Db.Model(&config.CaptionHistory{}).Where("user_id = ?", userID).Count(&count)
@@ -118,13 +142,15 @@ func ProcessHandler(c *gin.Context) {
 	if time.Until(deleteAt) < time.Hour {
 		warning = "Kết quả này sẽ bị xóa sau chưa đầy 1 giờ, hãy tải về nếu cần giữ lại."
 	}
-	//Gọi GPT để gợi ý caption & hashtag
-	captionsAndHashtag, err := service.GenerateSuggestion(transcript, apiKey)
+
+	// Gọi GPT để gợi ý caption & hashtag
+	captionsAndHashtag, err := service.GenerateCaptionWithService(transcript, apiKey, gptServiceName, gptModelAPIName)
 	if err != nil {
 		util.CleanupDir(videoDir)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT error"})
 		return
 	}
+
 	// Trừ token cho Gemini dịch (tính theo ký tự gửi lên)
 	jsonData, _ = json.Marshal(segments)
 	geminiTokens := int(float64(len(jsonData))/62.5 + 0.9999)
@@ -163,6 +189,7 @@ func ProcessVideoHandler(c *gin.Context) {
 	processID := c.GetUint("process_id")
 	processService := service.NewProcessStatusService()
 	creditService := service.NewCreditService()
+	pricingService := service.NewPricingService()
 
 	// Đảm bảo cập nhật trạng thái process khi hoàn thành hoặc lỗi
 	defer func() {
@@ -187,9 +214,7 @@ func ProcessVideoHandler(c *gin.Context) {
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "No video file provided",
-		})
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
 		return
 	}
 	// Kiểm tra kích thước file không quá 100MB
@@ -197,7 +222,7 @@ func ProcessVideoHandler(c *gin.Context) {
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ hỗ trợ file tối đa 100MB."})
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileTooLarge, nil)
 		return
 	}
 
@@ -278,8 +303,18 @@ func ProcessVideoHandler(c *gin.Context) {
 			return
 		}
 	} else {
-		// Không có custom SRT, dùng Whisper như cũ
-		transcript, segments, _, err = service.TranscribeWhisperOpenAI(audioPath, apiKey)
+		// Không có custom SRT, dùng Whisper thông qua service_config
+		whisperServiceName, whisperModelAPIName, err := pricingService.GetActiveServiceForType("speech_to_text")
+		if err != nil {
+			if processID > 0 {
+				processService.UpdateProcessStatus(processID, "failed")
+			}
+			util.CleanupDir(videoDir)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get active speech-to-text service"})
+			return
+		}
+
+		transcript, segments, _, err = service.TranscribeWithService(audioPath, apiKey, whisperServiceName, whisperModelAPIName)
 		if err != nil {
 			if processID > 0 {
 				processService.UpdateProcessStatus(processID, "failed")
@@ -292,8 +327,6 @@ func ProcessVideoHandler(c *gin.Context) {
 
 	// Tính chi phí Whisper theo thời gian audio thực tế
 	durationMinutes := duration / 60.0
-
-	pricingService := service.NewPricingService()
 	whisperCost, err := pricingService.CalculateWhisperCost(durationMinutes)
 	if err != nil {
 		if processID > 0 {
@@ -524,16 +557,29 @@ func ProcessVideoHandler(c *gin.Context) {
 		return
 	}
 
-	// Convert translated SRT to speech with target language
+	// Convert translated SRT to speech with target language using service_config
 	log.Printf("Starting TTS conversion with language: %s, speaking rate: %f", targetLanguage, speakingRate)
-	ttsPath, err := service.ConvertSRTToSpeechWithLanguage(string(srtContentBytes), videoDir, speakingRate, targetLanguage)
+
+	// Lấy service config cho TTS
+	ttsServiceName, ttsModelAPIName, err := pricingService.GetActiveServiceForType("text_to_speech")
+	if err != nil {
+		creditService.UnlockCredits(userID, estimatedCost-whisperCost-geminiCost-ttsCost, "process-video", "Unlock remaining credits due to TTS service config error", nil)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get active text-to-speech service"})
+		return
+	}
+
+	ttsPath, err := service.ConvertSRTToSpeechWithService(string(srtContentBytes), videoDir, speakingRate, targetLanguage, ttsServiceName, ttsModelAPIName)
 	if err != nil {
 		creditService.UnlockCredits(userID, estimatedCost-whisperCost-geminiCost-ttsCost, "process-video", "Unlock remaining credits due to TTS conversion error", nil)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
 		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to convert SRT to speech: %v", err)})
+		util.HandleError(c, http.StatusInternalServerError, util.ErrProcessingFailed, err)
 		return
 	}
 
@@ -764,7 +810,7 @@ func TikTokOptimizerHandler(c *gin.Context) {
 
 	file, err := c.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "File upload error"})
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
 		return
 	}
 
@@ -787,13 +833,13 @@ func TikTokOptimizerHandler(c *gin.Context) {
 	uniqueName := fmt.Sprintf("%d_%s%s", timestamp, baseName, filepath.Ext(file.Filename))
 	videoDir := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName)))
 	if err := os.MkdirAll(videoDir, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create video directory"})
+		util.HandleError(c, http.StatusInternalServerError, util.ErrDirectoryCreation, err)
 		return
 	}
 	videoPath := filepath.Join(videoDir, uniqueName)
 	if err := c.SaveUploadedFile(file, videoPath); err != nil {
 		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save video file"})
+		util.HandleError(c, http.StatusInternalServerError, util.ErrFileUploadFailed, err)
 		return
 	}
 	// Tách audio từ video vào đúng thư mục

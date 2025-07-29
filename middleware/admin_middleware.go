@@ -23,7 +23,7 @@ func AdminAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Yêu cầu header Authorization"})
 			c.Abort()
 			return
 		}
@@ -31,7 +31,7 @@ func AdminAuthMiddleware() gin.HandlerFunc {
 		// Extract token from "Bearer <token>"
 		tokenParts := strings.Split(authHeader, " ")
 		if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header format"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Định dạng header Authorization không hợp lệ"})
 			c.Abort()
 			return
 		}
@@ -41,7 +41,7 @@ func AdminAuthMiddleware() gin.HandlerFunc {
 		// TODO: Implement proper JWT validation
 		// For now, just check if token exists
 		if tokenString == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Token không hợp lệ"})
 			c.Abort()
 			return
 		}
@@ -59,7 +59,7 @@ func AdminAuthMiddleware() gin.HandlerFunc {
 		var admin config.AdminUser
 		err := db.Where("id = ? AND is_active = ?", claims.AdminID, true).First(&admin).Error
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Admin account not found or inactive"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Tài khoản admin không tồn tại hoặc không hoạt động"})
 			c.Abort()
 			return
 		}
@@ -90,7 +90,7 @@ func AdminPermissionMiddleware(requiredPermission string) gin.HandlerFunc {
 		var admin config.AdminUser
 		err := db.Select("permissions").Where("id = ?", adminID).First(&admin).Error
 		if err != nil {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Failed to check permissions"})
+			c.JSON(http.StatusForbidden, gin.H{"error": "Không thể kiểm tra quyền"})
 			c.Abort()
 			return
 		}
@@ -100,13 +100,13 @@ func AdminPermissionMiddleware(requiredPermission string) gin.HandlerFunc {
 		if admin.Permissions != nil {
 			permissionsJSON, err := json.Marshal(admin.Permissions)
 			if err != nil {
-				c.JSON(http.StatusForbidden, gin.H{"error": "Invalid permissions format"})
+				c.JSON(http.StatusForbidden, gin.H{"error": "Định dạng quyền không hợp lệ"})
 				c.Abort()
 				return
 			}
 
 			if err := json.Unmarshal(permissionsJSON, &permissions); err != nil {
-				c.JSON(http.StatusForbidden, gin.H{"error": "Invalid permissions format"})
+				c.JSON(http.StatusForbidden, gin.H{"error": "Định dạng quyền không hợp lệ"})
 				c.Abort()
 				return
 			}
@@ -122,7 +122,7 @@ func AdminPermissionMiddleware(requiredPermission string) gin.HandlerFunc {
 		}
 
 		if !hasPermission {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions"})
+			c.JSON(http.StatusForbidden, gin.H{"error": "Không đủ quyền"})
 			c.Abort()
 			return
 		}
@@ -145,7 +145,7 @@ func AdminRoleMiddleware(requiredRoles ...string) gin.HandlerFunc {
 		}
 
 		if !hasRole {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient role"})
+			c.JSON(http.StatusForbidden, gin.H{"error": "Không đủ vai trò"})
 			c.Abort()
 			return
 		}

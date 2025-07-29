@@ -51,7 +51,7 @@ func SetupRoutes(r *gin.Engine) {
 		// Credit endpoints (new system)
 		protected.GET("/credit/balance", handler.GetCreditBalance)
 		protected.GET("/credit/history", handler.GetCreditHistory)
-		protected.POST("/credit/add", handler.AddCredits)
+		//protected.POST("/credit/add", handler.AddCredits)
 		protected.POST("/credit/estimate", handler.EstimateCost)
 
 		// Legacy estimate endpoint
@@ -76,11 +76,17 @@ func SetupRoutes(r *gin.Engine) {
 		adminProtected := admin.Group("/")
 		adminProtected.Use(middleware.AdminAuthMiddleware())
 		{
-			adminProtected.GET("/dashboard", handler.AdminDashboardHandler)
-			adminProtected.GET("/users", handler.AdminUsersHandler)
-			adminProtected.GET("/process-status", handler.AdminProcessStatusHandler)
-			adminProtected.POST("/process-status/:id", handler.AdminUpdateProcessStatusHandler)
-			adminProtected.GET("/upload-history", handler.AdminUploadHistoryHandler)
+					adminProtected.GET("/dashboard", handler.AdminDashboardHandler)
+		adminProtected.GET("/users", handler.AdminUsersHandler)
+		adminProtected.GET("/process-status", handler.AdminProcessStatusHandler)
+		adminProtected.POST("/process-status/:id", handler.AdminUpdateProcessStatusHandler)
+		adminProtected.GET("/upload-history", handler.AdminUploadHistoryHandler)
+		
+		// Service config management
+		adminProtected.GET("/service-config", handler.AdminServiceConfigHandler)
+		adminProtected.POST("/service-config", handler.AdminAddServiceConfigHandler)
+		adminProtected.PUT("/service-config", handler.AdminUpdateServiceConfigHandler)
+		adminProtected.DELETE("/service-config/:id", handler.AdminDeleteServiceConfigHandler)
 		}
 	}
 

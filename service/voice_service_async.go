@@ -107,7 +107,7 @@ func SeparateAudioAsync(audioPath string, fileName string, stemType string, vide
 		"-o", outputDir,
 		audioPath,
 	)
-	
+
 	// Set PATH to include Python framework
 	cmd.Env = append(os.Environ(), "PATH=/Library/Frameworks/Python.framework/Versions/3.11/bin:"+os.Getenv("PATH"))
 
@@ -129,8 +129,6 @@ func SeparateAudioAsync(audioPath string, fileName string, stemType string, vide
 
 		return "", fmt.Errorf("failed to run demucs: %v, output: %s", err, string(output))
 	}
-
-	log.Printf("Demucs output: %s", string(output))
 
 	// Get the appropriate stem file (Demucs output)
 	htdemucsDir := filepath.Join(outputDir, "htdemucs")

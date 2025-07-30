@@ -236,8 +236,6 @@ func (ws *WorkerService) runDemucs(ctx context.Context, job *AudioProcessingJob)
 		return "", fmt.Errorf("demucs failed: %v, output: %s", err, string(output))
 	}
 
-	log.Printf("Demucs output: %s", string(output))
-
 	// Tìm file kết quả
 	htdemucsDir := filepath.Join(outputDir, "htdemucs")
 	subDirs, err := os.ReadDir(htdemucsDir)

@@ -422,8 +422,7 @@ func ProcessVideoHandler(c *gin.Context) {
 
 	var translatedSRTContent string
 	var translatedSRTPath string
-	var geminiCost float64 = 0
-	var geminiTokens int = 0
+	var translationCost float64 = 0
 
 	if !hasCustomSrt {
 		// Lấy service_name và model_api_name cho nghiệp vụ dịch SRT từ bảng service_config
@@ -438,8 +437,14 @@ func ProcessVideoHandler(c *gin.Context) {
 			return
 		}
 
-		// Translate the original SRT file using Gemini to target language
-		translatedSRTContent, err = service.TranslateSRTFileWithModelAndLanguage(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
+		// Translate the original SRT file using the configured service (Gemini or GPT)
+		if strings.Contains(serviceName, "gpt") {
+			// Use GPT for translation
+			translatedSRTContent, err = service.TranslateSRTFileWithGPT(originalSRTPath, apiKey, srtModelAPIName)
+		} else {
+			// Use Gemini for translation (default)
+			translatedSRTContent, err = service.TranslateSRTFileWithModelAndLanguage(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
+		}
 		if err != nil {
 			creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to translation error", nil)
 			if processID > 0 {
@@ -462,26 +467,38 @@ func ProcessVideoHandler(c *gin.Context) {
 			return
 		}
 
-		// Tính chi phí Gemini theo số ký tự thực tế - sử dụng serviceName, không phải model_api_name
-		geminiCost, geminiTokens, _, err = pricingService.CalculateGeminiCost(originalSRTContent, serviceName)
+		// Tính chi phí translation theo service được chọn
+		var translationTokens int
+		var serviceDescription string
+
+		if strings.Contains(serviceName, "gpt") {
+			// Tính chi phí GPT
+			translationCost, translationTokens, err = pricingService.CalculateGPTCost(originalSRTContent)
+			serviceDescription = "GPT dịch SRT"
+		} else {
+			// Tính chi phí Gemini
+			translationCost, translationTokens, _, err = pricingService.CalculateGeminiCost(originalSRTContent, serviceName)
+			serviceDescription = "Gemini dịch SRT"
+		}
+
 		if err != nil {
-			creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to Gemini cost error", nil)
+			creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to translation cost error", nil)
 			if processID > 0 {
 				processService.UpdateProcessStatus(processID, "failed")
 			}
 			util.CleanupDir(videoDir)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to calculate Gemini cost"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to calculate translation cost"})
 			return
 		}
 
-		if err := creditService.DeductCredits(userID, geminiCost, serviceName, "Gemini dịch SRT", &captionHistory.ID, "per_token", float64(geminiTokens)); err != nil {
-			creditService.UnlockCredits(userID, estimatedCost-whisperCost-geminiCost, "process-video", "Unlock remaining credits due to Gemini deduction error", nil)
+		if err := creditService.DeductCredits(userID, translationCost, serviceName, serviceDescription, &captionHistory.ID, "per_token", float64(translationTokens)); err != nil {
+			creditService.UnlockCredits(userID, estimatedCost-whisperCost-translationCost, "process-video", "Unlock remaining credits due to translation deduction error", nil)
 			if processID > 0 {
 				processService.UpdateProcessStatus(processID, "failed")
 			}
 			util.CleanupDir(videoDir)
 			c.JSON(http.StatusPaymentRequired, gin.H{
-				"error":   "Không đủ credit cho Gemini",
+				"error":   "Không đủ credit cho translation",
 				"warning": "Số dư tài khoản của bạn không đủ để sử dụng dịch vụ này. Vui lòng nạp thêm credit để tiếp tục sử dụng!",
 			})
 			return
@@ -522,7 +539,7 @@ func ProcessVideoHandler(c *gin.Context) {
 	srtContentBytes, err := os.ReadFile(translatedSRTPath)
 	if err != nil {
 		log.Printf("Failed to read SRT file: %v", err)
-		creditService.UnlockCredits(userID, estimatedCost-whisperCost-geminiCost, "process-video", "Unlock remaining credits due to SRT read error", nil)
+		creditService.UnlockCredits(userID, estimatedCost-whisperCost-translationCost, "process-video", "Unlock remaining credits due to SRT read error", nil)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
@@ -535,7 +552,7 @@ func ProcessVideoHandler(c *gin.Context) {
 	// Tính chi phí TTS theo số ký tự thực tế (sử dụng Wavenet cho chất lượng tốt)
 	ttsCost, err := pricingService.CalculateTTSCost(string(srtContentBytes), true)
 	if err != nil {
-		creditService.UnlockCredits(userID, estimatedCost-whisperCost-geminiCost, "process-video", "Unlock remaining credits due to TTS cost error", nil)
+		creditService.UnlockCredits(userID, estimatedCost-whisperCost-translationCost, "process-video", "Unlock remaining credits due to TTS cost error", nil)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
@@ -545,7 +562,7 @@ func ProcessVideoHandler(c *gin.Context) {
 	}
 
 	if err := creditService.DeductCredits(userID, ttsCost, "tts", "Google TTS", &captionHistory.ID, "per_character", float64(len(srtContentBytes))); err != nil {
-		creditService.UnlockCredits(userID, estimatedCost-whisperCost-geminiCost-ttsCost, "process-video", "Unlock remaining credits due to TTS deduction error", nil)
+		creditService.UnlockCredits(userID, estimatedCost-whisperCost-translationCost-ttsCost, "process-video", "Unlock remaining credits due to TTS deduction error", nil)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
@@ -563,7 +580,7 @@ func ProcessVideoHandler(c *gin.Context) {
 	// Lấy service config cho TTS
 	ttsServiceName, ttsModelAPIName, err := pricingService.GetActiveServiceForType("text_to_speech")
 	if err != nil {
-		creditService.UnlockCredits(userID, estimatedCost-whisperCost-geminiCost-ttsCost, "process-video", "Unlock remaining credits due to TTS service config error", nil)
+		creditService.UnlockCredits(userID, estimatedCost-whisperCost-translationCost-ttsCost, "process-video", "Unlock remaining credits due to TTS service config error", nil)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
@@ -574,7 +591,7 @@ func ProcessVideoHandler(c *gin.Context) {
 
 	ttsPath, err := service.ConvertSRTToSpeechWithService(string(srtContentBytes), videoDir, speakingRate, targetLanguage, ttsServiceName, ttsModelAPIName)
 	if err != nil {
-		creditService.UnlockCredits(userID, estimatedCost-whisperCost-geminiCost-ttsCost, "process-video", "Unlock remaining credits due to TTS conversion error", nil)
+		creditService.UnlockCredits(userID, estimatedCost-whisperCost-translationCost-ttsCost, "process-video", "Unlock remaining credits due to TTS conversion error", nil)
 		if processID > 0 {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
@@ -1154,10 +1171,10 @@ func CreateSubtitleHandler(c *gin.Context) {
 		return
 	}
 
-	// Tính toán chi phí Gemini (nếu song ngữ)
-	var geminiCost float64 = 0
+	// Tính toán chi phí translation (nếu song ngữ)
+	var translationCost float64 = 0
 	if isBilingual {
-		// Ước tính chi phí Gemini dựa trên độ dài video
+		// Ước tính chi phí translation dựa trên độ dài video
 		serviceName, _, err := pricingService.GetActiveServiceForType("srt_translation")
 		if err != nil {
 			config.Db.Model(processStatus).Update("status", "failed")
@@ -1165,7 +1182,11 @@ func CreateSubtitleHandler(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy thông tin dịch vụ Gemini"})
 			return
 		}
-		geminiCost, _, _, err = pricingService.CalculateGeminiCost("sample text", serviceName)
+		if strings.Contains(serviceName, "gpt") {
+			translationCost, _, err = pricingService.CalculateGPTCost("sample text")
+		} else {
+			translationCost, _, _, err = pricingService.CalculateGeminiCost("sample text", serviceName)
+		}
 		if err != nil {
 			config.Db.Model(processStatus).Update("status", "failed")
 			util.CleanupDir(videoDir)
@@ -1174,7 +1195,7 @@ func CreateSubtitleHandler(c *gin.Context) {
 		}
 	}
 
-	totalCost := whisperCost + geminiCost
+	totalCost := whisperCost + translationCost
 
 	// Kiểm tra credit
 	creditBalanceMap, err := creditService.GetUserCreditBalance(userID)
@@ -1244,8 +1265,8 @@ func CreateSubtitleHandler(c *gin.Context) {
 	// Nếu song ngữ, dịch SRT
 	var translatedSRTPath string
 	if isBilingual {
-		// Lấy service config cho Gemini
-		_, srtModelAPIName, err := pricingService.GetActiveServiceForType("srt_translation")
+		// Lấy service config cho translation
+		serviceName, srtModelAPIName, err := pricingService.GetActiveServiceForType("srt_translation")
 		if err != nil {
 			creditService.UnlockCredits(userID, totalCost, "create-subtitle", "Unlock credits due to service config error", nil)
 			config.Db.Model(processStatus).Update("status", "failed")
@@ -1254,8 +1275,13 @@ func CreateSubtitleHandler(c *gin.Context) {
 			return
 		}
 
-		// Dịch SRT
-		translatedSRTContent, err := service.TranslateSRTFileWithModelAndLanguage(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
+		// Dịch SRT theo service được chọn
+		var translatedSRTContent string
+		if strings.Contains(serviceName, "gpt") {
+			translatedSRTContent, err = service.TranslateSRTFileWithGPT(originalSRTPath, apiKey, srtModelAPIName)
+		} else {
+			translatedSRTContent, err = service.TranslateSRTFileWithModelAndLanguage(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
+		}
 		if err != nil {
 			creditService.UnlockCredits(userID, totalCost, "create-subtitle", "Unlock credits due to translation error", nil)
 			config.Db.Model(processStatus).Update("status", "failed")
@@ -1322,8 +1348,15 @@ func CreateSubtitleHandler(c *gin.Context) {
 			return
 		}
 
-		if err := creditService.DeductCredits(userID, geminiCost, serviceName, "Gemini dịch SRT", &captionHistory.ID, "per_token", 1.0); err != nil {
-			creditService.UnlockCredits(userID, totalCost-whisperCost-geminiCost, "create-subtitle", "Unlock remaining credits due to Gemini deduction error", nil)
+		var serviceDescription string
+		if strings.Contains(serviceName, "gpt") {
+			serviceDescription = "GPT dịch SRT"
+		} else {
+			serviceDescription = "Gemini dịch SRT"
+		}
+
+		if err := creditService.DeductCredits(userID, translationCost, serviceName, serviceDescription, &captionHistory.ID, "per_token", 1.0); err != nil {
+			creditService.UnlockCredits(userID, totalCost-whisperCost-translationCost, "create-subtitle", "Unlock remaining credits due to translation deduction error", nil)
 			config.Db.Model(processStatus).Update("status", "failed")
 			util.CleanupDir(videoDir)
 			c.JSON(http.StatusPaymentRequired, gin.H{

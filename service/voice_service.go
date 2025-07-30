@@ -125,8 +125,6 @@ func separateAudio(audioPath string, fileName string, stemType string, videoDir 
 		return "", fmt.Errorf("failed to run demucs: %v", err)
 	}
 
-	log.Printf("Demucs output: %s", string(output))
-
 	// Get the appropriate stem file (Demucs output)
 	htdemucsDir := filepath.Join(outputDir, "htdemucs")
 	subDirs, err := os.ReadDir(htdemucsDir)
@@ -304,8 +302,5 @@ func BurnSubtitleWithBackground(videoPath, srtPath, outputDir string) (string, e
 		return "", fmt.Errorf("failed to burn subtitle: %v, output: %s", err, string(output))
 	}
 
-	log.Printf("FFmpeg burn subtitle output: %s", string(output))
 	return outputPath, nil
 }
-
-

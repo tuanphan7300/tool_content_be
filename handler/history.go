@@ -96,9 +96,16 @@ func GetHistory(c *gin.Context) {
 	for _, h := range histories {
 		var processStatus config.UserProcessStatus
 		status := ""
+
+		// Thử tìm process_status bằng video_id
 		if err := config.Db.Where("user_id = ? AND process_type = ? AND video_id = ?", h.UserID, h.ProcessType, h.ID).Order("created_at desc").First(&processStatus).Error; err == nil {
 			status = processStatus.Status
+		} else {
+			// Nếu không tìm thấy bằng video_id, mặc định là thất bại
+			// Vì nếu process thành công thì phải có video_id
+			status = "failed"
 		}
+
 		result = append(result, HistoryWithStatus{
 			CaptionHistory: h,
 			ProcessStatus:  status,

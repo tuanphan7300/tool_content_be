@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 )
 
 type GPTRequest struct {
@@ -159,4 +160,78 @@ func GenerateCaptionWithService(transcript, apiKey, serviceName, modelAPIName st
 	// Example: if serviceName == "claude" { return GenerateCaptionWithClaude(transcript, apiKey, modelAPIName) }
 
 	return "", fmt.Errorf("unsupported caption generation service: %s", serviceName)
+}
+
+func TranslateSRTWithGPT(srtFilePath, apiKey, modelName string) (string, error) {
+	// Đọc file SRT
+	srtContent, err := os.ReadFile(srtFilePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read SRT file: %v", err)
+	}
+
+	url := "https://api.openai.com/v1/chat/completions"
+
+	prompt := fmt.Sprintf(`Hãy dịch file SRT sang tiếng Việt.
+
+TUÂN THỦ NGHIÊM NGẶT CÁC QUY TẮC SAU:
+- Giữ nguyên 100%% số thứ tự và dòng thời gian (timestamps)
+- Dịch tự nhiên, truyền cảm, phù hợp với văn nói
+- Rút gọn các câu quá dài để khớp với thời gian hiển thị
+- Đối với nội dung hoạt hình/truyện: dịch phù hợp với ngữ cảnh, giữ nguyên tên nhân vật nếu cần
+- Chỉ trả về nội dung SRT đã dịch, không thêm giải thích
+- Tên nhân vật hãy ưu tiên để dạng hán-việt. ví dụ: Nhị Cẩu, Tiểu Đản, Hồ Nam, Bắc Kinh
+
+Nội dung SRT cần dịch:
+%s`, string(srtContent))
+
+	reqBody := GPTRequest{
+		Model: modelName,
+		Messages: []GPTMessage{
+			{Role: "user", Content: prompt},
+		},
+	}
+
+	bodyBytes, _ := json.Marshal(reqBody)
+	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GPT API Error: %s", string(respBody))
+	}
+
+	var gptResp GPTResponse
+	json.Unmarshal(respBody, &gptResp)
+
+	if len(gptResp.Choices) > 0 {
+		return gptResp.Choices[0].Message.Content, nil
+	}
+
+	return "", fmt.Errorf("No response from GPT")
+}
+
+func EstimateGPTTokens(srtFilePath, modelName string) (int, error) {
+	// Đọc file SRT
+	srtContent, err := os.ReadFile(srtFilePath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read SRT file: %v", err)
+	}
+
+	// Ước tính tokens dựa trên số ký tự
+	// GPT thường sử dụng ~4 ký tự = 1 token
+	contentLength := len(string(srtContent))
+	estimatedTokens := contentLength / 4
+
+	// Thêm tokens cho prompt
+	promptTokens := 200 // Ước tính tokens cho prompt
+
+	return estimatedTokens + promptTokens, nil
 }

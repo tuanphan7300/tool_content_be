@@ -133,15 +133,17 @@ func BurnSubHandler(c *gin.Context) {
 	}
 	subtitleBgColor := c.PostForm("subtitle_bgcolor")
 	if subtitleBgColor == "" {
-		subtitleBgColor = "#000000" // mặc định đen
+		subtitleBgColor = "#808080" // mặc định xám nhạt thay vì đen
 	}
 
 	// Tạo job burn-sub và enqueue vào queue
 	jobID := fmt.Sprintf("burnsub_%d_%d", userID, timestamp)
+	processID := c.GetUint("process_id") // Lấy process_id từ middleware
 	job := &service.AudioProcessingJob{
 		ID:              jobID,
 		JobType:         "burn-sub",
 		UserID:          userID,
+		ProcessID:       processID,
 		FileName:        safeVideoName,
 		VideoDir:        videoDir,
 		SubtitlePath:    subPath,

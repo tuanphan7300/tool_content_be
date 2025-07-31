@@ -272,22 +272,45 @@ func MergeVideoWithAudio(videoPath, backgroundMusicPath, ttsPath, videoDir strin
 	return outputPath, nil
 }
 
-// BurnSubtitleWithBackground burns subtitle into video with black background
-func BurnSubtitleWithBackground(videoPath, srtPath, outputDir string) (string, error) {
+// BurnSubtitleWithBackground burns subtitle into video with solid background box
+func BurnSubtitleWithBackground(videoPath, srtPath, outputDir string, textColor, bgColor string) (string, error) {
 	// Create output directory if it doesn't exist
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create output directory: %v", err)
+	}
+
+	// Check if SRT file exists
+	if _, err := os.Stat(srtPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("SRT file not found: %s", srtPath)
+	}
+
+	// Check if video file exists
+	if _, err := os.Stat(videoPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("Video file not found: %s", videoPath)
 	}
 
 	// Generate output filename with timestamp
 	timestamp := time.Now().Format("20060102_150405")
 	outputPath := filepath.Join(outputDir, fmt.Sprintf("burned_%s.mp4", timestamp))
 
-	// FFmpeg command to burn subtitle with black background
-	// -vf "subtitles=subtitle.srt:force_style='Fontsize=24,PrimaryColour=&Hffffff,OutlineColour=&H000000,BackColour=&H000000,Outline=2,Shadow=1'"
+	// Convert hex colors to ASS format
+	textColorASS := convertHexToASSColor(textColor)
+	bgColorASS := convertHexToASSColor(bgColor)
+
+	// Use absolute path for SRT file to avoid path issues
+	absSrtPath, err := filepath.Abs(srtPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to get absolute path for SRT: %v", err)
+	}
+
+	log.Printf("Burning subtitle: video=%s, srt=%s, textColor=%s, bgColor=%s", videoPath, absSrtPath, textColor, bgColor)
+
+	// FFmpeg command to burn subtitle with solid background box
+	// Use absolute path and escape special characters
+	escapedSrtPath := strings.ReplaceAll(absSrtPath, "'", "\\'")
 	cmd := exec.Command("ffmpeg",
 		"-i", videoPath,
-		"-vf", fmt.Sprintf("subtitles=%s:force_style='Fontsize=24,PrimaryColour=&Hffffff,OutlineColour=&H000000,BackColour=&H000000,Outline=2,Shadow=1'", srtPath),
+		"-vf", fmt.Sprintf("subtitles='%s':force_style='Fontsize=24,PrimaryColour=%s,BackColour=%s,Outline=2,Shadow=0,BorderStyle=3'", escapedSrtPath, textColorASS, bgColorASS),
 		"-c:a", "copy", // Copy audio without re-encoding
 		"-y", // Overwrite output file
 		outputPath,
@@ -297,8 +320,159 @@ func BurnSubtitleWithBackground(videoPath, srtPath, outputDir string) (string, e
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("FFmpeg burn subtitle error: %s", string(output))
+		log.Printf("FFmpeg command: %s", strings.Join(cmd.Args, " "))
 		return "", fmt.Errorf("failed to burn subtitle: %v, output: %s", err, string(output))
 	}
 
+	// Verify output file was created
+	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("output file was not created: %s", outputPath)
+	}
+
+	log.Printf("Successfully burned subtitle to: %s", outputPath)
 	return outputPath, nil
+}
+
+// BurnSubtitleWithASS burns subtitle using ASS format (alternative method)
+func BurnSubtitleWithASS(videoPath, srtPath, outputDir string, textColor, bgColor string) (string, error) {
+	// Create output directory if it doesn't exist
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create output directory: %v", err)
+	}
+
+	// Generate output filename with timestamp
+	timestamp := time.Now().Format("20060102_150405")
+	outputPath := filepath.Join(outputDir, fmt.Sprintf("burned_ass_%s.mp4", timestamp))
+
+	// Convert SRT to ASS format
+	assPath := strings.Replace(srtPath, ".srt", ".ass", 1)
+	if err := convertSRTtoASS(srtPath, assPath, textColor, bgColor); err != nil {
+		return "", fmt.Errorf("failed to convert SRT to ASS: %v", err)
+	}
+
+	// Use absolute path for ASS file
+	absAssPath, err := filepath.Abs(assPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to get absolute path for ASS: %v", err)
+	}
+
+	log.Printf("Burning subtitle with ASS: video=%s, ass=%s", videoPath, absAssPath)
+
+	// FFmpeg command using ASS format
+	cmd := exec.Command("ffmpeg",
+		"-i", videoPath,
+		"-vf", fmt.Sprintf("ass=%s", absAssPath),
+		"-c:a", "copy",
+		"-y",
+		outputPath,
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("FFmpeg ASS burn subtitle error: %s", string(output))
+		return "", fmt.Errorf("failed to burn subtitle with ASS: %v, output: %s", err, string(output))
+	}
+
+	// Clean up temporary ASS file
+	os.Remove(assPath)
+
+	return outputPath, nil
+}
+
+// convertHexToASSColor converts hex color to ASS format
+func convertHexToASSColor(hex string) string {
+	// Remove # if present
+	hex = strings.TrimPrefix(hex, "#")
+
+	// Ensure hex is 6 characters
+	if len(hex) != 6 {
+		return "&H000000" // Default black
+	}
+
+	// Convert hex to ASS format: &H00BBGGRR
+	// hex: RRGGBB
+	bb := hex[4:6] // Blue
+	gg := hex[2:4] // Green
+	rr := hex[0:2] // Red
+	return fmt.Sprintf("&H00%s%s%s", bb, gg, rr)
+}
+
+// convertSRTtoASS converts SRT subtitle to ASS format with custom colors
+func convertSRTtoASS(srtPath, assPath, textColor, bgColor string) error {
+	// Read SRT file
+	srtContent, err := os.ReadFile(srtPath)
+	if err != nil {
+		return err
+	}
+
+	// Convert colors to ASS format
+	textColorASS := convertHexToASSColor(textColor)
+	bgColorASS := convertHexToASSColor(bgColor)
+
+	// Create ASS header with styling
+	assHeader := fmt.Sprintf(`[Script Info]
+Title: Converted from SRT
+ScriptType: v4.00+
+WrapStyle: 1
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.601
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,24,%s,%s,%s,%s,0,0,0,0,100,100,0,0,3,2,0,2,10,10,10,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`, textColorASS, textColorASS, textColorASS, bgColorASS)
+
+	// Parse SRT and convert to ASS
+	lines := strings.Split(string(srtContent), "\n")
+	var assEvents strings.Builder
+	assEvents.WriteString(assHeader)
+
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if line == "" || line == "1" || line == "2" || line == "3" {
+			continue // Skip SRT index numbers
+		}
+
+		// Check if this is a timestamp line
+		if strings.Contains(line, "-->") {
+			// Parse timestamp
+			parts := strings.Split(line, " --> ")
+			if len(parts) == 2 {
+				startTime := convertTimeToASS(parts[0])
+				endTime := convertTimeToASS(parts[1])
+
+				// Get subtitle text from next line
+				i++
+				if i < len(lines) {
+					text := strings.TrimSpace(lines[i])
+					if text != "" {
+						// Create ASS event
+						assEvent := fmt.Sprintf("Dialogue: 0,%s,%s,Default,,0,0,0,,%s\n", startTime, endTime, text)
+						assEvents.WriteString(assEvent)
+					}
+				}
+			}
+		}
+	}
+
+	// Write ASS file
+	return os.WriteFile(assPath, []byte(assEvents.String()), 0644)
+}
+
+// convertTimeToASS converts SRT time format to ASS time format
+func convertTimeToASS(srtTime string) string {
+	// SRT format: 00:00:01,000
+	// ASS format: 0:00:01.00
+	srtTime = strings.TrimSpace(srtTime)
+	srtTime = strings.Replace(srtTime, ",", ".", 1)
+
+	// Remove leading zeros from hours
+	if strings.HasPrefix(srtTime, "00:") {
+		srtTime = "0:" + srtTime[3:]
+	}
+
+	return srtTime
 }

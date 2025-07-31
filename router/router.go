@@ -45,7 +45,7 @@ func SetupRoutes(r *gin.Engine) {
 		protected.POST("/process-background", handler.ProcessBackgroundMusicHandler)
 		protected.POST("/process-video", middleware.ProcessAnyStatusMiddleware(), middleware.ProcessStatusMiddleware("process-video"), handler.ProcessVideoHandler)
 		protected.POST("/text-to-speech", handler.TextToSpeechHandler)
-		protected.POST("/burn-sub", middleware.ProcessAnyStatusMiddleware(), handler.BurnSubHandler)
+		protected.POST("/burn-sub", middleware.ProcessAnyStatusMiddleware(), middleware.ProcessStatusMiddleware("burn-sub"), handler.BurnSubHandler)
 		protected.POST("/create-subtitle", middleware.ProcessAnyStatusMiddleware(), middleware.ProcessStatusMiddleware("create-subtitle"), handler.CreateSubtitleHandler)
 
 		// Credit endpoints (new system)
@@ -76,17 +76,17 @@ func SetupRoutes(r *gin.Engine) {
 		adminProtected := admin.Group("/")
 		adminProtected.Use(middleware.AdminAuthMiddleware())
 		{
-					adminProtected.GET("/dashboard", handler.AdminDashboardHandler)
-		adminProtected.GET("/users", handler.AdminUsersHandler)
-		adminProtected.GET("/process-status", handler.AdminProcessStatusHandler)
-		adminProtected.POST("/process-status/:id", handler.AdminUpdateProcessStatusHandler)
-		adminProtected.GET("/upload-history", handler.AdminUploadHistoryHandler)
-		
-		// Service config management
-		adminProtected.GET("/service-config", handler.AdminServiceConfigHandler)
-		adminProtected.POST("/service-config", handler.AdminAddServiceConfigHandler)
-		adminProtected.PUT("/service-config", handler.AdminUpdateServiceConfigHandler)
-		adminProtected.DELETE("/service-config/:id", handler.AdminDeleteServiceConfigHandler)
+			adminProtected.GET("/dashboard", handler.AdminDashboardHandler)
+			adminProtected.GET("/users", handler.AdminUsersHandler)
+			adminProtected.GET("/process-status", handler.AdminProcessStatusHandler)
+			adminProtected.POST("/process-status/:id", handler.AdminUpdateProcessStatusHandler)
+			adminProtected.GET("/upload-history", handler.AdminUploadHistoryHandler)
+
+			// Service config management
+			adminProtected.GET("/service-config", handler.AdminServiceConfigHandler)
+			adminProtected.POST("/service-config", handler.AdminAddServiceConfigHandler)
+			adminProtected.PUT("/service-config", handler.AdminUpdateServiceConfigHandler)
+			adminProtected.DELETE("/service-config/:id", handler.AdminDeleteServiceConfigHandler)
 		}
 	}
 

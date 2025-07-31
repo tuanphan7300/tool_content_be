@@ -290,10 +290,10 @@ func (ws *WorkerService) runBurnSubtitle(job *AudioProcessingJob) (string, error
 	timestamp := time.Now().Format("20060102_150405")
 	outputPath := filepath.Join(outputDir, fmt.Sprintf("burned_%s.mp4", timestamp))
 
-	// Xử lý màu chữ và màu nền
+	// Xử lý màu chữ và màu nền với solid background box
 	color := hexToASSColor(job.SubtitleColor)
 	bgcolor := hexToASSColor(job.SubtitleBgColor)
-	forceStyle := fmt.Sprintf("PrimaryColour=%s,BackColour=%s,BorderStyle=3", color, bgcolor)
+	forceStyle := fmt.Sprintf("Fontsize=24,PrimaryColour=%s,BackColour=%s,Outline=2,Shadow=0,BorderStyle=3", color, bgcolor)
 
 	cmd := exec.Command(
 		"ffmpeg",
@@ -322,6 +322,11 @@ func (ws *WorkerService) runBurnSubtitle(job *AudioProcessingJob) (string, error
 	if err := config.Db.Create(&captionHistory).Error; err != nil {
 		log.Printf("Failed to save burn-sub history: %v", err)
 	}
+
+	// Cập nhật trạng thái process thành completed
+	processService := NewProcessStatusService()
+	processService.UpdateProcessStatus(job.ProcessID, "completed")
+	processService.UpdateProcessVideoID(job.ProcessID, captionHistory.ID)
 
 	return outputPath, nil
 }

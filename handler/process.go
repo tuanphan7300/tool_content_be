@@ -208,6 +208,16 @@ func ProcessVideoHandler(c *gin.Context) {
 		targetLanguage = "vi" // Default to Vietnamese
 	}
 
+	// Get subtitle color parameters
+	subtitleColor := c.PostForm("subtitle_color")
+	if subtitleColor == "" {
+		subtitleColor = "#FFFFFF" // Default to white (same as burn-sub)
+	}
+	subtitleBgColor := c.PostForm("subtitle_bgcolor")
+	if subtitleBgColor == "" {
+		subtitleBgColor = "#808080" // Default to gray (same as burn-sub)
+	}
+
 	// Get the uploaded file
 	file, err := c.FormFile("file")
 	if err != nil {
@@ -614,17 +624,42 @@ func ProcessVideoHandler(c *gin.Context) {
 		mergedVideoPath = ""
 	}
 
-	// Burn subtitle vào video với background đen
+	// Burn subtitle vào video với solid background box
 	finalVideoPath := mergedVideoPath
 	if mergedVideoPath != "" && translatedSRTPath != "" {
-		burnedVideoPath, err := service.BurnSubtitleWithBackground(mergedVideoPath, translatedSRTPath, videoDir)
-		if err != nil {
-			log.Printf("Failed to burn subtitle: %v", err)
-			// Nếu burn subtitle thất bại, vẫn dùng video đã merge
+		log.Printf("Attempting to burn subtitle: %s", translatedSRTPath)
+
+		// Check if SRT file exists and has content
+		if srtContent, err := os.ReadFile(translatedSRTPath); err != nil {
+			log.Printf("Failed to read SRT file: %v", err)
+			finalVideoPath = mergedVideoPath
+		} else if len(strings.TrimSpace(string(srtContent))) == 0 {
+			log.Printf("SRT file is empty: %s", translatedSRTPath)
 			finalVideoPath = mergedVideoPath
 		} else {
-			finalVideoPath = burnedVideoPath
+			// Try SRT method first
+			burnedVideoPath, err := service.BurnSubtitleWithBackground(mergedVideoPath, translatedSRTPath, videoDir, subtitleColor, subtitleBgColor)
+			if err != nil {
+				log.Printf("SRT method failed: %v", err)
+
+				// Try ASS method as fallback
+				log.Printf("Trying ASS method as fallback...")
+				burnedVideoPath, err = service.BurnSubtitleWithASS(mergedVideoPath, translatedSRTPath, videoDir, subtitleColor, subtitleBgColor)
+				if err != nil {
+					log.Printf("ASS method also failed: %v", err)
+					// Nếu cả hai method đều thất bại, vẫn dùng video đã merge
+					finalVideoPath = mergedVideoPath
+				} else {
+					finalVideoPath = burnedVideoPath
+					log.Printf("Successfully burned subtitle with ASS method: %s", burnedVideoPath)
+				}
+			} else {
+				finalVideoPath = burnedVideoPath
+				log.Printf("Successfully burned subtitle with SRT method: %s", burnedVideoPath)
+			}
 		}
+	} else {
+		log.Printf("Skipping subtitle burn: mergedVideoPath=%s, translatedSRTPath=%s", mergedVideoPath, translatedSRTPath)
 	}
 
 	// Update history

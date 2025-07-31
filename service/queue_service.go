@@ -19,6 +19,7 @@ type AudioProcessingJob struct {
 	CreatedAt       int64   `json:"created_at"`
 	UserID          uint    `json:"user_id"`
 	VideoID         uint    `json:"video_id"`
+	ProcessID       uint    `json:"process_id"`   // ID từ user_process_status
 	Priority        int     `json:"priority"`     // 1-10, 10 là cao nhất
 	MaxDuration     float64 `json:"max_duration"` // Giới hạn thời gian xử lý
 	JobType         string  `json:"job_type"`     // "demucs", "burn-sub"...

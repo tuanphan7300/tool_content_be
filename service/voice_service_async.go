@@ -24,6 +24,7 @@ type DemucsConfig struct {
 func GetDemucsPath() string {
 	// Danh sách các đường dẫn có thể có
 	possiblePaths := []string{
+		"/root/demucs-env/bin/demucs", // Linux server path
 		"/Library/Frameworks/Python.framework/Versions/3.11/bin/demucs",
 		"/Users/phantuan/Library/Frameworks/Python.framework/Versions/3.11/bin/demucs",
 		"/Users/phantuan/Library/Python/3.9/bin/demucs",

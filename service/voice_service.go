@@ -256,8 +256,6 @@ func MergeVideoWithAudio(videoPath, backgroundMusicPath, ttsPath, videoDir strin
 		return "", fmt.Errorf("failed to merge video with audio: %v, output: %s", err, string(output))
 	}
 
-	log.Printf("FFmpeg merge output: %s", string(output))
-
 	// Verify final video duration
 	finalDurationCmd := exec.Command("ffprobe",
 		"-v", "error",

@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"gorm.io/datatypes"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -40,12 +41,30 @@ func ConnectDatabase() {
 	)
 
 	var err error
-	Db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Info)})
+	Db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Info),
+		// Cấu hình để tránh lock timeout
+		DisableForeignKeyConstraintWhenMigrating: true,
+	})
 	if err != nil {
 		log.Fatalf("Error connecting to database: %v", err)
 	} else {
 		fmt.Println("Successfully connected to the database!")
 	}
+
+	// Cấu hình connection pool và timeout
+	sqlDB, err := Db.DB()
+	if err != nil {
+		log.Fatalf("Error getting underlying sql.DB: %v", err)
+	}
+
+	// Cấu hình connection pool
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetMaxOpenConns(100)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+
+	// Cấu hình timeout cho lock
+	sqlDB.SetConnMaxIdleTime(30 * time.Minute)
 
 	//Tự động migrate bảng (tạo bảng nếu chưa có)
 	//err = Db.AutoMigrate(&CaptionHistory{}, &Users{}, &UserTokens{}, &TokenTransaction{})
@@ -233,4 +252,91 @@ type AdminUser struct {
 
 func (AdminUser) TableName() string {
 	return "admin_users"
+}
+
+// PaymentOrder lưu thông tin đơn hàng thanh toán
+type PaymentOrder struct {
+	ID                uint            `json:"id" gorm:"primaryKey"`
+	UserID            uint            `json:"user_id" gorm:"index"`
+	OrderCode         string          `json:"order_code" gorm:"uniqueIndex;size:50"`
+	AmountVND         decimal.Decimal `json:"amount_vnd" gorm:"type:decimal(12,0)"`
+	AmountUSD         decimal.Decimal `json:"amount_usd" gorm:"type:decimal(10,2)"`
+	ExchangeRate      decimal.Decimal `json:"exchange_rate" gorm:"type:decimal(10,4)"`
+	BankAccount       string          `json:"bank_account" gorm:"size:50"`
+	BankName          string          `json:"bank_name" gorm:"size:100"`
+	QRCodeURL         *string         `json:"qr_code_url" gorm:"size:500"`
+	QRCodeData        *string         `json:"qr_code_data" gorm:"type:text"`
+	OrderStatus       string          `json:"order_status" gorm:"type:enum('pending','paid','expired','cancelled');default:'pending'"`
+	PaymentMethod     string          `json:"payment_method" gorm:"type:enum('qr_code','bank_transfer');default:'qr_code'"`
+	ExpiresAt         time.Time       `json:"expires_at"`
+	PaidAt            *time.Time      `json:"paid_at"`
+	TransactionID     *string         `json:"transaction_id" gorm:"size:100"`
+	EmailConfirmation *string         `json:"email_confirmation" gorm:"type:text"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
+}
+
+// BankAccount lưu thông tin tài khoản ngân hàng
+type BankAccount struct {
+	ID            uint            `json:"id" gorm:"primaryKey"`
+	BankName      string          `json:"bank_name" gorm:"size:100"`
+	AccountNumber string          `json:"account_number" gorm:"size:50;uniqueIndex"`
+	AccountName   string          `json:"account_name" gorm:"size:200"`
+	BankCode      string          `json:"bank_code" gorm:"size:20"`
+	CardBin       string          `json:"card_bin" gorm:"size:20"`
+	IsActive      bool            `json:"is_active" gorm:"default:true"`
+	DailyLimit    decimal.Decimal `json:"daily_limit" gorm:"type:decimal(12,0);default:100000000"`
+	MonthlyLimit  decimal.Decimal `json:"monthly_limit" gorm:"type:decimal(12,0);default:1000000000"`
+	CreatedAt     time.Time       `json:"created_at"`
+}
+
+// EmailTemplate lưu template mail xác nhận thanh toán
+type EmailTemplate struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	BankName       string    `json:"bank_name" gorm:"size:100"`
+	TemplateName   string    `json:"template_name" gorm:"size:100"`
+	SubjectPattern *string   `json:"subject_pattern" gorm:"size:200"`
+	SenderPattern  *string   `json:"sender_pattern" gorm:"size:200"`
+	AmountPattern  *string   `json:"amount_pattern" gorm:"size:100"`
+	AccountPattern *string   `json:"account_pattern" gorm:"size:100"`
+	ContentPattern *string   `json:"content_pattern" gorm:"type:text"`
+	IsActive       bool      `json:"is_active" gorm:"default:true"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// PaymentLog lưu log thanh toán
+type PaymentLog struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	OrderID   uint      `json:"order_id" gorm:"index"`
+	LogType   string    `json:"log_type" gorm:"type:enum('order_created','qr_generated','payment_detected','payment_confirmed','payment_failed')"`
+	Message   string    `json:"message" gorm:"type:text"`
+	Metadata  *string   `json:"metadata" gorm:"type:json"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// PaymentEmailLog lưu log các email thanh toán đã đọc từ IMAP
+// Status: matched, unmatched, error
+// ErrorMessage: nếu có lỗi khi xử lý
+// TransactionID: nếu parse được
+// OrderID: nếu match được đơn hàng
+// EmailContent: nội dung mail
+// Sender: địa chỉ gửi
+// Subject: tiêu đề mail
+// ReceivedAt: thời gian nhận mail
+// CreatedAt: thời gian lưu log
+
+type PaymentEmailLog struct {
+	ID            uint      `json:"id" gorm:"primaryKey"`
+	OrderCode     string    `json:"order_code"`
+	OrderID       *uint     `json:"order_id"`
+	Amount        string    `json:"amount"`
+	BankAccount   string    `json:"bank_account"`
+	TransactionID string    `json:"transaction_id"`
+	Sender        string    `json:"sender"`
+	Subject       string    `json:"subject"`
+	EmailContent  string    `json:"email_content" gorm:"type:text"`
+	Status        string    `json:"status" gorm:"type:enum('matched','unmatched','error');default:'unmatched'"`
+	ErrorMessage  string    `json:"error_message" gorm:"type:text"`
+	ReceivedAt    time.Time `json:"received_at"`
+	CreatedAt     time.Time `json:"created_at"`
 }

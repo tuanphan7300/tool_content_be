@@ -67,6 +67,17 @@ func SetupRoutes(r *gin.Engine) {
 		protected.POST("/queue/worker/stop", handler.StopWorkerService)
 	}
 
+	// Payment routes
+	payment := r.Group("/")
+	payment.Use(middleware.AuthMiddleware())
+	{
+		payment.POST("/payment/create-order", handler.CreatePaymentOrder)
+		payment.GET("/payment/order/:order_code", handler.GetPaymentOrder)
+		payment.GET("/payment/orders", handler.GetUserPaymentOrders)
+		payment.POST("/payment/order/:order_code/cancel", handler.CancelPaymentOrder)
+		payment.GET("/payment/order/:order_code/status", handler.GetPaymentOrderStatus)
+	}
+
 	// Admin routes
 	admin := r.Group("/admin")
 	{
@@ -88,6 +99,7 @@ func SetupRoutes(r *gin.Engine) {
 			adminProtected.PUT("/service-config", handler.AdminUpdateServiceConfigHandler)
 			adminProtected.DELETE("/service-config/:id", handler.AdminDeleteServiceConfigHandler)
 		}
+		admin.GET("/payment/email-logs", handler.GetPaymentEmailLogs)
 	}
 
 	// Serve static files

@@ -23,6 +23,8 @@ func init() {
 }
 
 func main() {
+	infaConfig := config.InfaConfig{}
+	infaConfig.LoadConfig()
 	config.ConnectDatabase()
 	defer func() {
 		db, _ := config.Db.DB()
@@ -76,6 +78,43 @@ func main() {
 			}
 		}
 	}()
+
+	// Khởi tạo email monitoring service
+	//emailConfig := service.EmailConfig{
+	//	Host:     infaConfig.EmailImapHost,
+	//	Port:     993, // Default IMAP SSL port
+	//	Username: infaConfig.EmailImapUser,
+	//	Password: infaConfig.EmailImapPassword,
+	//	SSL:      true,
+	//}
+
+	//if emailConfig.Host != "" && emailConfig.Username != "" && emailConfig.Password != "" {
+	//	emailService := service.NewEmailMonitoringService(emailConfig)
+	//	err = emailService.StartEmailWorker()
+	//	if err != nil {
+	//		log.Printf("Failed to start email monitoring: %v", err)
+	//	} else {
+	//		log.Println("Email monitoring service started")
+	//	}
+	//} else {
+	//	log.Println("Email monitoring disabled - missing configuration")
+	//}
+
+	// Khởi động cron job kiểm tra đơn hàng hết hạn
+	//go func() {
+	//	ticker := time.NewTicker(1 * time.Minute)
+	//	defer ticker.Stop()
+	//
+	//	paymentService := service.NewPaymentOrderService()
+	//	for {
+	//		select {
+	//		case <-ticker.C:
+	//			if err := paymentService.CheckExpiredOrders(); err != nil {
+	//				log.Printf("Failed to check expired orders: %v", err)
+	//			}
+	//		}
+	//	}
+	//}()
 
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{

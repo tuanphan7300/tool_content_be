@@ -2,6 +2,7 @@ package handler
 
 import (
 	"creator-tool-backend/config"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -466,6 +467,37 @@ func AdminUploadHistoryHandler(c *gin.Context) {
 			"total": total,
 			"pages": (int(total) + limit - 1) / limit,
 		},
+	})
+}
+
+// GET /admin/payment/email-logs
+func GetPaymentEmailLogs(c *gin.Context) {
+	page := 1
+	limit := 20
+	if p := c.Query("page"); p != "" {
+		fmt.Sscanf(p, "%d", &page)
+	}
+	if l := c.Query("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+	status := c.Query("status")
+	orderCode := c.Query("order_code")
+
+	var logs []config.PaymentEmailLog
+	db := config.Db.Order("created_at desc")
+	if status != "" {
+		db = db.Where("status = ?", status)
+	}
+	if orderCode != "" {
+		db = db.Where("order_code = ?", orderCode)
+	}
+	db = db.Offset((page - 1) * limit).Limit(limit)
+	db.Find(&logs)
+
+	c.JSON(200, gin.H{
+		"logs":  logs,
+		"page":  page,
+		"limit": limit,
 	})
 }
 

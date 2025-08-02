@@ -3,11 +3,11 @@ package handler
 import (
 	"creator-tool-backend/config"
 	"fmt"
+	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
-
-	"math"
 
 	"creator-tool-backend/service"
 
@@ -600,9 +600,25 @@ func GetAdminPaymentOrders(c *gin.Context) {
 
 	offset := (page - 1) * limit
 
-	// Build query với join user
+	// Build query với join user - select rõ ràng các field
 	query := config.Db.Table("payment_orders").
-		Select("payment_orders.*, users.email as user_email, users.name as user_name").
+		Select(`
+			payment_orders.id,
+			payment_orders.user_id,
+			payment_orders.order_code,
+			payment_orders.amount_vnd,
+			payment_orders.amount_usd,
+			payment_orders.bank_account,
+			payment_orders.bank_name,
+			payment_orders.order_status,
+			payment_orders.payment_method,
+			payment_orders.expires_at,
+			payment_orders.paid_at,
+			payment_orders.transaction_id,
+			payment_orders.created_at,
+			users.email as user_email,
+			users.name as user_name
+		`).
 		Joins("LEFT JOIN users ON payment_orders.user_id = users.id")
 
 	// Apply filters
@@ -626,8 +642,27 @@ func GetAdminPaymentOrders(c *gin.Context) {
 	var total int64
 	query.Count(&total)
 
+	// Define struct để map dữ liệu chính xác
+	type PaymentOrderRow struct {
+		ID            uint       `json:"id"`
+		UserID        uint       `json:"user_id"`
+		OrderCode     string     `json:"order_code"`
+		AmountVND     string     `json:"amount_vnd"` // MySQL decimal trả về string
+		AmountUSD     string     `json:"amount_usd"` // MySQL decimal trả về string
+		BankAccount   string     `json:"bank_account"`
+		BankName      string     `json:"bank_name"`
+		OrderStatus   string     `json:"order_status"`
+		PaymentMethod string     `json:"payment_method"`
+		ExpiresAt     time.Time  `json:"expires_at"`
+		PaidAt        *time.Time `json:"paid_at"`
+		TransactionID *string    `json:"transaction_id"`
+		CreatedAt     time.Time  `json:"created_at"`
+		UserEmail     *string    `json:"user_email"`
+		UserName      *string    `json:"user_name"`
+	}
+
 	// Get orders
-	var orders []map[string]interface{}
+	var orders []PaymentOrderRow
 	err := query.Order("payment_orders.created_at DESC").
 		Offset(offset).
 		Limit(limit).
@@ -638,25 +673,44 @@ func GetAdminPaymentOrders(c *gin.Context) {
 		return
 	}
 
+	// Debug log để xem dữ liệu thực tế
+	log.Printf("Raw orders from DB: %+v", orders)
+
 	// Format response
 	var formattedOrders []gin.H
 	for _, order := range orders {
+		// Convert amount_vnd to float64
+		var amountVND float64
+		if order.AmountVND != "" {
+			if f, err := strconv.ParseFloat(order.AmountVND, 64); err == nil {
+				amountVND = f
+			}
+		}
+
+		// Convert amount_usd to float64
+		var amountUSD float64
+		if order.AmountUSD != "" {
+			if f, err := strconv.ParseFloat(order.AmountUSD, 64); err == nil {
+				amountUSD = f
+			}
+		}
+
 		formattedOrders = append(formattedOrders, gin.H{
-			"id":             order["id"],
-			"user_id":        order["user_id"],
-			"user_email":     order["user_email"],
-			"user_name":      order["user_name"],
-			"order_code":     order["order_code"],
-			"amount_vnd":     order["amount_vnd"],
-			"amount_usd":     order["amount_usd"],
-			"bank_account":   order["bank_account"],
-			"bank_name":      order["bank_name"],
-			"order_status":   order["order_status"],
-			"payment_method": order["payment_method"],
-			"expires_at":     order["expires_at"],
-			"paid_at":        order["paid_at"],
-			"transaction_id": order["transaction_id"],
-			"created_at":     order["created_at"],
+			"id":             order.ID,
+			"user_id":        order.UserID,
+			"user_email":     order.UserEmail,
+			"user_name":      order.UserName,
+			"order_code":     order.OrderCode,
+			"amount_vnd":     amountVND,
+			"amount_usd":     amountUSD,
+			"bank_account":   order.BankAccount,
+			"bank_name":      order.BankName,
+			"order_status":   order.OrderStatus,
+			"payment_method": order.PaymentMethod,
+			"expires_at":     order.ExpiresAt,
+			"paid_at":        order.PaidAt,
+			"transaction_id": order.TransactionID,
+			"created_at":     order.CreatedAt,
 		})
 	}
 

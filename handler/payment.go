@@ -164,6 +164,7 @@ func GetUserPaymentOrders(c *gin.Context) {
 				"id":           order.ID,
 				"order_code":   order.OrderCode,
 				"amount_usd":   order.AmountUSD.String(),
+				"amount_vnd":   order.AmountVND.String(),
 				"order_status": order.OrderStatus,
 				"paid_at":      order.PaidAt,
 				"created_at":   order.CreatedAt,

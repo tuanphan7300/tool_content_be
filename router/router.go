@@ -79,7 +79,7 @@ func SetupRoutes(r *gin.Engine) {
 	}
 
 	// API v1 group
-	apiV1 := r.Group("/api/v1")
+	apiV1 := r.Group("/v1")
 	{
 		// Sepay webhook (public route - không cần auth)
 		apiV1.POST("/webhook/sepay", handler.SepayWebhookHandler)

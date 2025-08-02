@@ -298,6 +298,12 @@ func SepayWebhookHandler(c *gin.Context) {
 	if err := config.Db.Create(&logEntry).Error; err != nil {
 		log.Printf("Failed to create initial log entry: %v", err)
 	}
+	var webhookDataInterface map[string]interface{}
+	if err := c.ShouldBindJSON(&webhookDataInterface); err != nil {
+		// Cập nhật log với lỗi parse JSON
+		log.Println("Failed to unmarshal webhook data: %v", err)
+	}
+	log.Println("webhookDataInterface sepay webhook", webhookDataInterface)
 
 	var webhookData struct {
 		OrderCode     string  `json:"order_code"`

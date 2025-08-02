@@ -101,11 +101,19 @@ func GetHistory(c *gin.Context) {
 		if err := config.Db.Where("user_id = ? AND process_type = ? AND video_id = ?", h.UserID, h.ProcessType, h.ID).Order("created_at desc").First(&processStatus).Error; err == nil {
 			status = processStatus.Status
 		} else {
-			// Nếu không tìm thấy process_status, kiểm tra merged_video_file để xác định trạng thái
-			if h.MergedVideoFile != "" {
-				status = "completed"
+			// Nếu không tìm thấy process_status, thử tìm bằng process_type và user_id (cho các process không có video_id)
+			if err := config.Db.Where("user_id = ? AND process_type = ?", h.UserID, h.ProcessType).Order("created_at desc").First(&processStatus).Error; err == nil {
+				status = processStatus.Status
 			} else {
-				status = "processing"
+				// Fallback: kiểm tra merged_video_file để xác định trạng thái
+				if h.MergedVideoFile != "" {
+					status = "completed"
+				} else if h.ProcessType == "tiktok-optimize" && h.SuggestedCaption != "" {
+					// TikTok Optimizer hoàn thành khi có suggested_caption
+					status = "completed"
+				} else {
+					status = "processing"
+				}
 			}
 		}
 

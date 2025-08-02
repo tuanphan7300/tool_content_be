@@ -206,7 +206,7 @@ type UserProcessStatus struct {
 	ID          uint       `json:"id" gorm:"primaryKey"`
 	UserID      uint       `json:"user_id" gorm:"index"`
 	Status      string     `json:"status" gorm:"type:enum('processing','completed','failed','cancelled');default:'processing'"`
-	ProcessType string     `json:"process_type" gorm:"type:enum('process','process-video','process-voice','process-background')"`
+	ProcessType string     `json:"process_type" gorm:"type:enum('process','process-video','process-voice','process-background','tiktok-optimize','create-subtitle')"`
 	StartedAt   time.Time  `json:"started_at" gorm:"default:CURRENT_TIMESTAMP"`
 	CompletedAt *time.Time `json:"completed_at"`
 	VideoID     *uint      `json:"video_id"`

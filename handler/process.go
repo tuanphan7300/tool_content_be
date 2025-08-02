@@ -1106,6 +1106,7 @@ QUAN TRỌNG: Chỉ trả về JSON thuần túy, không có text giải thích 
 	config.Db.Model(processStatus).Updates(map[string]interface{}{
 		"status":      "completed",
 		"CompletedAt": time.Now(),
+		"video_id":    captionHistory.ID,
 	})
 	c.JSON(http.StatusOK, result)
 }

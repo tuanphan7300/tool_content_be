@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"time"
 
+	"math"
+
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -498,6 +500,81 @@ func GetPaymentEmailLogs(c *gin.Context) {
 		"logs":  logs,
 		"page":  page,
 		"limit": limit,
+	})
+}
+
+// GetSepayWebhookLogs lấy danh sách log webhook từ Sepay
+func GetSepayWebhookLogs(c *gin.Context) {
+	// Lấy query parameters
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	status := c.Query("status")
+	orderCode := c.Query("order_code")
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 50
+	}
+
+	offset := (page - 1) * limit
+
+	// Build query
+	query := config.Db.Model(&config.SepayWebhookLog{})
+
+	// Apply filters
+	if status != "" {
+		query = query.Where("processing_status = ?", status)
+	}
+	if orderCode != "" {
+		query = query.Where("order_code LIKE ?", "%"+orderCode+"%")
+	}
+
+	// Get total count
+	var total int64
+	query.Count(&total)
+
+	// Get logs
+	var logs []config.SepayWebhookLog
+	err := query.Order("created_at DESC").
+		Offset(offset).
+		Limit(limit).
+		Find(&logs).Error
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get webhook logs"})
+		return
+	}
+
+	// Format response
+	var formattedLogs []gin.H
+	for _, log := range logs {
+		formattedLogs = append(formattedLogs, gin.H{
+			"id":                 log.ID,
+			"order_code":         log.OrderCode,
+			"amount":             log.Amount,
+			"status":             log.Status,
+			"transaction_id":     log.TransactionID,
+			"signature":          log.Signature,
+			"timestamp":          log.Timestamp,
+			"raw_payload":        log.RawPayload,
+			"headers":            log.Headers,
+			"ip_address":         log.IPAddress,
+			"user_agent":         log.UserAgent,
+			"processing_status":  log.ProcessingStatus,
+			"error_message":      log.ErrorMessage,
+			"processing_time_ms": log.ProcessingTimeMs,
+			"created_at":         log.CreatedAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"logs":        formattedLogs,
+		"total":       total,
+		"page":        page,
+		"limit":       limit,
+		"total_pages": int(math.Ceil(float64(total) / float64(limit))),
 	})
 }
 

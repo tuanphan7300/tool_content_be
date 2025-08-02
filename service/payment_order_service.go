@@ -57,7 +57,7 @@ func (s *PaymentOrderService) CreateOrder(userID uint, amountUSD float64) (*conf
 		BankAccount:   bankAccount.AccountNumber,
 		BankName:      bankAccount.BankName,
 		OrderStatus:   "pending",
-		PaymentMethod: "qr_code",
+		PaymentMethod: "qr_code",                        // Giữ nguyên qr_code để hiển thị QR
 		ExpiresAt:     time.Now().Add(30 * time.Minute), // Hết hạn sau 30 phút
 		CreatedAt:     time.Now(),
 	}

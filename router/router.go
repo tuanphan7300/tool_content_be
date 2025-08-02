@@ -78,6 +78,13 @@ func SetupRoutes(r *gin.Engine) {
 		payment.GET("/payment/order/:order_code/status", handler.GetPaymentOrderStatus)
 	}
 
+	// API v1 group
+	apiV1 := r.Group("/api/v1")
+	{
+		// Sepay webhook (public route - không cần auth)
+		apiV1.POST("/webhook/sepay", handler.SepayWebhookHandler)
+	}
+
 	// Admin routes
 	admin := r.Group("/admin")
 	{
@@ -98,6 +105,9 @@ func SetupRoutes(r *gin.Engine) {
 			adminProtected.POST("/service-config", handler.AdminAddServiceConfigHandler)
 			adminProtected.PUT("/service-config", handler.AdminUpdateServiceConfigHandler)
 			adminProtected.DELETE("/service-config/:id", handler.AdminDeleteServiceConfigHandler)
+
+			// Sepay webhook logs
+			adminProtected.GET("/sepay/webhook-logs", handler.GetSepayWebhookLogs)
 		}
 		admin.GET("/payment/email-logs", handler.GetPaymentEmailLogs)
 	}

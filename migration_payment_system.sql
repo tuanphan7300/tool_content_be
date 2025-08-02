@@ -94,4 +94,9 @@ ON DUPLICATE KEY UPDATE `is_active` = VALUES(`is_active`);
 -- Tạo index cho performance
 CREATE INDEX `idx_payment_orders_user_status` ON `payment_orders` (`user_id`, `order_status`);
 CREATE INDEX `idx_payment_orders_expires` ON `payment_orders` (`expires_at`, `order_status`);
-CREATE INDEX `idx_payment_logs_order_type` ON `payment_logs` (`order_id`, `log_type`); 
+CREATE INDEX `idx_payment_logs_order_type` ON `payment_logs` (`order_id`, `log_type`);
+
+'1','Vietcombank','1020760830','PHAN VAN TUAN','VCB','0','100000000','1000000000','2025-07-31 14:45:56','970436'
+'2','BIDV','0987654321','NGUYEN VAN A','BIDV','0','100000000','1000000000','2025-07-31 14:45:56',''
+'3','Techcombank','19038740478018','PHAN VAN TUAN','TCB','0','100000000','1000000000','2025-07-31 14:45:56','970407'
+'4','ACB','21360471','PHAN VAN TUAN','ACB','1','100000000','1000000000','2025-07-31 14:45:56','970416'

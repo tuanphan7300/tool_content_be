@@ -340,3 +340,30 @@ type PaymentEmailLog struct {
 	ReceivedAt    time.Time `json:"received_at"`
 	CreatedAt     time.Time `json:"created_at"`
 }
+
+// SepayWebhookLog lưu log tất cả webhook từ Sepay
+// ProcessingStatus: received, validated, processed, failed, ignored
+// RawPayload: toàn bộ payload JSON gốc
+// Headers: headers của request
+// IPAddress: IP của Sepay
+// UserAgent: User-Agent của request
+// ProcessingTimeMs: thời gian xử lý tính bằng milliseconds
+// ErrorMessage: nếu có lỗi khi xử lý
+
+type SepayWebhookLog struct {
+	ID               uint             `json:"id" gorm:"primaryKey"`
+	OrderCode        *string          `json:"order_code" gorm:"size:50"`
+	Amount           *decimal.Decimal `json:"amount" gorm:"type:decimal(12,0)"`
+	Status           *string          `json:"status" gorm:"size:50"`
+	TransactionID    *string          `json:"transaction_id" gorm:"size:100"`
+	Signature        *string          `json:"signature" gorm:"size:255"`
+	Timestamp        *int64           `json:"timestamp"`
+	RawPayload       datatypes.JSON   `json:"raw_payload" gorm:"type:json"`
+	Headers          datatypes.JSON   `json:"headers" gorm:"type:json"`
+	IPAddress        *string          `json:"ip_address" gorm:"size:45"`
+	UserAgent        *string          `json:"user_agent" gorm:"size:500"`
+	ProcessingStatus string           `json:"processing_status" gorm:"type:enum('received','validated','processed','failed','ignored');default:'received'"`
+	ErrorMessage     *string          `json:"error_message" gorm:"type:text"`
+	ProcessingTimeMs *int             `json:"processing_time_ms"`
+	CreatedAt        time.Time        `json:"created_at"`
+}

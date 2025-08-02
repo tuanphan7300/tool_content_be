@@ -12,6 +12,8 @@ import (
 // SepayAuthMiddleware xác thực API Key từ Sepay
 func SepayAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		infaConfig := config.InfaConfig{}
+		infaConfig.LoadConfig()
 		// Lấy API Key từ header Authorization
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -33,7 +35,7 @@ func SepayAuthMiddleware() gin.HandlerFunc {
 		}
 
 		apiKey := parts[1]
-		expectedApiKey := config.InfaCfg.SepayApiKey
+		expectedApiKey := infaConfig.SepayApiKey
 
 		// Kiểm tra API Key có hợp lệ không
 		if expectedApiKey == "" {

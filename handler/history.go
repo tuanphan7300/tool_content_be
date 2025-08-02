@@ -101,9 +101,12 @@ func GetHistory(c *gin.Context) {
 		if err := config.Db.Where("user_id = ? AND process_type = ? AND video_id = ?", h.UserID, h.ProcessType, h.ID).Order("created_at desc").First(&processStatus).Error; err == nil {
 			status = processStatus.Status
 		} else {
-			// Nếu không tìm thấy bằng video_id, mặc định là thất bại
-			// Vì nếu process thành công thì phải có video_id
-			status = "failed"
+			// Nếu không tìm thấy process_status, kiểm tra merged_video_file để xác định trạng thái
+			if h.MergedVideoFile != "" {
+				status = "completed"
+			} else {
+				status = "processing"
+			}
 		}
 
 		result = append(result, HistoryWithStatus{

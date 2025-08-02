@@ -2,7 +2,6 @@ package handler
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -177,28 +176,14 @@ func BurnSubHandler(c *gin.Context) {
 		return
 	}
 
-	// Tạo CaptionHistory cho burn-sub
-	captionHistory := config.CaptionHistory{
-		UserID:              userID,
-		VideoFilename:       videoPath,
-		VideoFilenameOrigin: videoFile.Filename,
-		SrtFile:             subPath,
-		ProcessType:         "burn-sub",
-		CreatedAt:           time.Now(),
-	}
-	if err := config.Db.Create(&captionHistory).Error; err != nil {
-		log.Printf("Failed to save burn-sub history: %v", err)
-	} else {
-		log.Printf("Successfully saved burn-sub history: ID=%d, UserID=%d, ProcessType=%s",
-			captionHistory.ID, captionHistory.UserID, captionHistory.ProcessType)
-	}
+	// Không tạo CaptionHistory ở đây - Worker Service sẽ tạo khi xử lý xong
 	// Giới hạn 10 action gần nhất cho user
 	processService := service.NewProcessStatusService()
 	_ = processService.LimitUserCaptionHistories(userID)
 	// Lấy tổng số action hiện tại
 	var count int64
 	config.Db.Model(&config.CaptionHistory{}).Where("user_id = ?", userID).Count(&count)
-	deleteAt := captionHistory.CreatedAt.Add(24 * time.Hour)
+	deleteAt := time.Now().Add(24 * time.Hour)
 	var warning string
 	if count >= 9 {
 		warning = "Bạn chỉ được lưu tối đa 10 kết quả, kết quả cũ nhất sẽ bị xóa khi tạo mới."

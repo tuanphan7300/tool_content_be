@@ -9,6 +9,8 @@ import (
 
 	"math"
 
+	"creator-tool-backend/service"
+
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -575,6 +577,197 @@ func GetSepayWebhookLogs(c *gin.Context) {
 		"page":        page,
 		"limit":       limit,
 		"total_pages": int(math.Ceil(float64(total) / float64(limit))),
+	})
+}
+
+// GetAdminPaymentOrders lấy danh sách đơn hàng thanh toán cho admin
+func GetAdminPaymentOrders(c *gin.Context) {
+	// Lấy query parameters
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	status := c.Query("status")
+	orderCode := c.Query("order_code")
+	userEmail := c.Query("user_email")
+	dateFrom := c.Query("date_from")
+	dateTo := c.Query("date_to")
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 50
+	}
+
+	offset := (page - 1) * limit
+
+	// Build query với join user
+	query := config.Db.Table("payment_orders").
+		Select("payment_orders.*, users.email as user_email, users.name as user_name").
+		Joins("LEFT JOIN users ON payment_orders.user_id = users.id")
+
+	// Apply filters
+	if status != "" {
+		query = query.Where("payment_orders.order_status = ?", status)
+	}
+	if orderCode != "" {
+		query = query.Where("payment_orders.order_code LIKE ?", "%"+orderCode+"%")
+	}
+	if userEmail != "" {
+		query = query.Where("users.email LIKE ?", "%"+userEmail+"%")
+	}
+	if dateFrom != "" {
+		query = query.Where("payment_orders.created_at >= ?", dateFrom)
+	}
+	if dateTo != "" {
+		query = query.Where("payment_orders.created_at <= ?", dateTo+" 23:59:59")
+	}
+
+	// Get total count
+	var total int64
+	query.Count(&total)
+
+	// Get orders
+	var orders []map[string]interface{}
+	err := query.Order("payment_orders.created_at DESC").
+		Offset(offset).
+		Limit(limit).
+		Find(&orders).Error
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get payment orders"})
+		return
+	}
+
+	// Format response
+	var formattedOrders []gin.H
+	for _, order := range orders {
+		formattedOrders = append(formattedOrders, gin.H{
+			"id":             order["id"],
+			"user_id":        order["user_id"],
+			"user_email":     order["user_email"],
+			"user_name":      order["user_name"],
+			"order_code":     order["order_code"],
+			"amount_vnd":     order["amount_vnd"],
+			"amount_usd":     order["amount_usd"],
+			"bank_account":   order["bank_account"],
+			"bank_name":      order["bank_name"],
+			"order_status":   order["order_status"],
+			"payment_method": order["payment_method"],
+			"expires_at":     order["expires_at"],
+			"paid_at":        order["paid_at"],
+			"transaction_id": order["transaction_id"],
+			"created_at":     order["created_at"],
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"orders":      formattedOrders,
+		"total":       total,
+		"page":        page,
+		"limit":       limit,
+		"total_pages": int(math.Ceil(float64(total) / float64(limit))),
+	})
+}
+
+// GetAdminPaymentStats lấy thống kê thanh toán cho admin
+func GetAdminPaymentStats(c *gin.Context) {
+	// Thống kê theo trạng thái
+	type StatusStat struct {
+		OrderStatus string `json:"order_status"`
+		Count       int64  `json:"count"`
+		TotalAmount string `json:"total_amount"`
+	}
+	var statusStats []StatusStat
+	err := config.Db.Table("payment_orders").
+		Select("order_status, COUNT(*) as count, COALESCE(SUM(amount_vnd), 0) as total_amount").
+		Group("order_status").
+		Find(&statusStats).Error
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get payment stats"})
+		return
+	}
+
+	// Thống kê theo ngày (7 ngày gần nhất)
+	type DailyStat struct {
+		Date        string `json:"date"`
+		Count       int64  `json:"count"`
+		TotalAmount string `json:"total_amount"`
+	}
+	var dailyStats []DailyStat
+	err = config.Db.Table("payment_orders").
+		Select("DATE(created_at) as date, COUNT(*) as count, COALESCE(SUM(amount_vnd), 0) as total_amount").
+		Where("created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)").
+		Group("DATE(created_at)").
+		Order("date DESC").
+		Find(&dailyStats).Error
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get daily stats"})
+		return
+	}
+
+	// Tổng quan
+	var totalOrders int64
+	var totalAmountStr string
+	var pendingOrders int64
+	var completedOrders int64
+
+	config.Db.Table("payment_orders").Count(&totalOrders)
+	config.Db.Table("payment_orders").Select("COALESCE(SUM(amount_vnd), 0) as total").Scan(&totalAmountStr)
+	config.Db.Table("payment_orders").Where("order_status = 'pending'").Count(&pendingOrders)
+	config.Db.Table("payment_orders").Where("order_status = 'paid'").Count(&completedOrders)
+
+	c.JSON(http.StatusOK, gin.H{
+		"status_stats":     statusStats,
+		"daily_stats":      dailyStats,
+		"total_orders":     totalOrders,
+		"total_amount":     totalAmountStr,
+		"pending_orders":   pendingOrders,
+		"completed_orders": completedOrders,
+	})
+}
+
+// CancelAdminPaymentOrder hủy đơn hàng thanh toán (admin)
+func CancelAdminPaymentOrder(c *gin.Context) {
+	orderID := c.Param("id")
+	if orderID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Order ID is required"})
+		return
+	}
+
+	// Parse order ID
+	id, err := strconv.ParseUint(orderID, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid order ID"})
+		return
+	}
+
+	// Tìm đơn hàng
+	var order config.PaymentOrder
+	err = config.Db.First(&order, id).Error
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"})
+		return
+	}
+
+	// Kiểm tra trạng thái đơn hàng
+	if order.OrderStatus != "pending" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Order cannot be cancelled"})
+		return
+	}
+
+	// Cập nhật trạng thái thành cancelled
+	paymentService := service.NewPaymentOrderService()
+	err = paymentService.UpdateOrderStatus(uint(id), "cancelled", nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to cancel order"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":      "Order cancelled successfully",
+		"order_status": "cancelled",
 	})
 }
 

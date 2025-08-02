@@ -41,19 +41,25 @@ POST /api/v1/webhook/sepay
 
 ## Cấu hình
 
-### 1. Secret Key
-Thêm secret key vào file config:
+### 1. API Key Authentication
+Thêm API Key vào file config:
 ```go
 // config/config.go
 type InfaConfig struct {
     // ... existing fields
-    SepaySecretKey string `env:"SEPAY_SECRET_KEY"`
+    SepayApiKey string `envconfig:"SEPAY_API_KEY"`
 }
 ```
 
 ### 2. Environment Variables
 ```bash
-SEPAY_SECRET_KEY=your_secret_key_here
+SEPAY_API_KEY=your_api_key_here
+```
+
+### 3. Authentication Header
+Sepay sẽ gửi API Key trong header:
+```
+Authorization: Apikey YOUR_API_KEY_HERE
 ```
 
 ## Luồng xử lý
@@ -73,11 +79,10 @@ SEPAY_SECRET_KEY=your_secret_key_here
 
 ## Security
 
-### Signature Verification
-- Sử dụng HMAC-SHA256
-- Format: `key1=value1&key2=value2&...`
-- Sort keys alphabetically
-- Exclude signature field
+### API Key Authentication
+- Sepay gửi API Key trong header `Authorization: Apikey API_KEY`
+- Backend verify API Key trước khi xử lý webhook
+- Chỉ webhook có API Key hợp lệ mới được xử lý
 
 ### Validation
 - Order code phải tồn tại (từ `code` field hoặc extract từ `content`)
@@ -92,6 +97,7 @@ SEPAY_SECRET_KEY=your_secret_key_here
 ```bash
 curl -X POST http://localhost:8888/api/v1/webhook/sepay \
   -H "Content-Type: application/json" \
+  -H "Authorization: Apikey YOUR_API_KEY_HERE" \
   -d '{
     "id": 92704,
     "gateway": "Vietcombank",

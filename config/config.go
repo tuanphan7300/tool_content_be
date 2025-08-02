@@ -22,6 +22,7 @@ type InfaConfig struct {
 	EmailImapHost      string `envconfig:"EMAIL_IMAP_HOST" default:""`
 	EmailImapUser      string `envconfig:"EMAIL_IMAP_USER" default:""`
 	EmailImapPassword  string `envconfig:"EMAIL_IMAP_PASS" default:""`
+	SepayApiKey        string `envconfig:"SEPAY_API_KEY" default:""`
 }
 
 func (cfg *InfaConfig) LoadConfig() {

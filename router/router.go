@@ -81,8 +81,8 @@ func SetupRoutes(r *gin.Engine) {
 	// API v1 group
 	apiV1 := r.Group("/v1")
 	{
-		// Sepay webhook (public route - không cần auth)
-		apiV1.POST("/webhook/sepay", handler.SepayWebhookHandler)
+		// Sepay webhook (cần xác thực API Key)
+		apiV1.POST("/webhook/sepay", middleware.SepayAuthMiddleware(), handler.SepayWebhookHandler)
 	}
 
 	// Admin routes
@@ -108,6 +108,11 @@ func SetupRoutes(r *gin.Engine) {
 
 			// Sepay webhook logs
 			adminProtected.GET("/sepay/webhook-logs", handler.GetSepayWebhookLogs)
+
+			// Payment management
+			adminProtected.GET("/payments", handler.GetAdminPaymentOrders)
+			adminProtected.GET("/payments/stats", handler.GetAdminPaymentStats)
+			adminProtected.POST("/payments/:id/cancel", handler.CancelAdminPaymentOrder)
 		}
 		admin.GET("/payment/email-logs", handler.GetPaymentEmailLogs)
 	}

@@ -3,12 +3,12 @@ package handler
 import (
 	"creator-tool-backend/config"
 	"creator-tool-backend/service"
-	"creator-tool-backend/util"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -305,84 +305,100 @@ func SepayWebhookHandler(c *gin.Context) {
 	}
 	log.Println("webhookDataInterface sepay webhook", webhookDataInterface)
 
-	var webhookData struct {
-		OrderCode     string  `json:"order_code"`
-		Amount        float64 `json:"amount"`
-		Status        string  `json:"status"`
-		TransactionID string  `json:"transaction_id"`
-		Signature     string  `json:"signature"`
-		Timestamp     int64   `json:"timestamp"`
+	// Parse webhook data theo format thực tế của Sepay
+	var webhookData map[string]interface{}
+	if err := json.Unmarshal(rawBody, &webhookData); err != nil {
+		log.Printf("Failed to unmarshal webhook data: %v", err)
+		webhookData = make(map[string]interface{})
 	}
 
-	if err := c.ShouldBindJSON(&webhookData); err != nil {
-		// Cập nhật log với lỗi parse JSON
-		errorMsg := "Invalid webhook data: " + err.Error()
+	log.Printf("webhookData sepay webhook %v", webhookData)
+
+	// Extract thông tin từ format Sepay
+	var orderCode string
+	var amount float64
+	var transactionID string
+
+	// Lấy order code từ content hoặc code
+	if content, ok := webhookData["content"].(string); ok {
+		// Tìm order code trong content (format: PAY202508020808253439)
+		if strings.Contains(content, "PAY") {
+			parts := strings.Split(content, ".")
+			for _, part := range parts {
+				if strings.HasPrefix(part, "PAY") {
+					orderCode = part
+					break
+				}
+			}
+		}
+	}
+
+	// Nếu không tìm thấy trong content, thử từ code field
+	if orderCode == "" {
+		if code, ok := webhookData["code"].(string); ok && code != "" {
+			orderCode = code
+		}
+	}
+
+	// Lấy amount
+	if transferAmount, ok := webhookData["transferAmount"].(float64); ok {
+		amount = transferAmount
+	}
+
+	// Lấy transaction ID
+	if id, ok := webhookData["id"].(float64); ok {
+		transactionID = fmt.Sprintf("%.0f", id)
+	}
+
+	// Kiểm tra transferType phải là "in" (tiền vào)
+	transferType, _ := webhookData["transferType"].(string)
+	if transferType != "in" {
+		// Cập nhật log với trạng thái ignored
 		config.Db.Model(&logEntry).Updates(map[string]interface{}{
-			"processing_status":  "failed",
-			"error_message":      errorMsg,
+			"processing_status":  "ignored",
+			"error_message":      "Transfer type is not 'in': " + transferType,
 			"processing_time_ms": int(time.Since(startTime).Milliseconds()),
 		})
 
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid webhook data"})
+		c.JSON(http.StatusOK, gin.H{"message": "Transfer type is not 'in'"})
 		return
 	}
 
 	// Cập nhật log với thông tin parsed
 	config.Db.Model(&logEntry).Updates(map[string]interface{}{
-		"order_code":        webhookData.OrderCode,
-		"amount":            webhookData.Amount,
-		"status":            webhookData.Status,
-		"transaction_id":    webhookData.TransactionID,
-		"signature":         webhookData.Signature,
-		"timestamp":         webhookData.Timestamp,
+		"order_code":        orderCode,
+		"amount":            amount,
+		"status":            "success", // Sepay gửi khi thanh toán thành công
+		"transaction_id":    transactionID,
+		"signature":         "", // Sepay không gửi signature
+		"timestamp":         nil,
 		"processing_status": "validated",
 	})
 
-	// Verify signature từ Sepay (cần thêm secret key vào config)
-	// TODO: Lấy secret key từ config
-	secretKey := "your_sepay_secret_key" // Thay thế bằng secret key thực từ config
+	// Log thêm thông tin chi tiết
+	log.Printf("Sepay webhook processed - Order: %s, Amount: %.0f, Gateway: %v, TransactionID: %s",
+		orderCode, amount, webhookData["gateway"], transactionID)
 
-	// Chuyển đổi webhookData thành map để verify
-	dataMap := map[string]interface{}{
-		"order_code":     webhookData.OrderCode,
-		"amount":         webhookData.Amount,
-		"status":         webhookData.Status,
-		"transaction_id": webhookData.TransactionID,
-		"timestamp":      webhookData.Timestamp,
-	}
-
-	if !util.VerifySepaySignature(dataMap, webhookData.Signature, secretKey) {
-		// Cập nhật log với lỗi signature
-		errorMsg := "Invalid signature"
+	// Kiểm tra order code có hợp lệ không
+	if orderCode == "" {
+		// Cập nhật log với lỗi order code không tìm thấy
+		errorMsg := "Order code not found in content"
 		config.Db.Model(&logEntry).Updates(map[string]interface{}{
 			"processing_status":  "failed",
 			"error_message":      errorMsg,
 			"processing_time_ms": int(time.Since(startTime).Milliseconds()),
 		})
 
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid signature"})
-		return
-	}
-
-	// Kiểm tra trạng thái thanh toán
-	if webhookData.Status != "success" {
-		// Cập nhật log với trạng thái ignored
-		config.Db.Model(&logEntry).Updates(map[string]interface{}{
-			"processing_status":  "ignored",
-			"error_message":      "Payment status is not success: " + webhookData.Status,
-			"processing_time_ms": int(time.Since(startTime).Milliseconds()),
-		})
-
-		c.JSON(http.StatusOK, gin.H{"message": "Payment not successful"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Order code not found in content"})
 		return
 	}
 
 	// Tìm đơn hàng theo order code
 	paymentService := service.NewPaymentOrderService()
-	order, err := paymentService.GetOrderByCode(webhookData.OrderCode)
+	order, err := paymentService.GetOrderByCode(orderCode)
 	if err != nil {
 		// Cập nhật log với lỗi order not found
-		errorMsg := "Order not found: " + webhookData.OrderCode
+		errorMsg := "Order not found: " + orderCode
 		config.Db.Model(&logEntry).Updates(map[string]interface{}{
 			"processing_status":  "failed",
 			"error_message":      errorMsg,
@@ -408,9 +424,9 @@ func SepayWebhookHandler(c *gin.Context) {
 
 	// Kiểm tra số tiền
 	expectedAmount, _ := order.AmountVND.Float64()
-	if webhookData.Amount != expectedAmount {
+	if amount != expectedAmount {
 		// Cập nhật log với lỗi amount mismatch
-		errorMsg := fmt.Sprintf("Amount mismatch: expected %.0f, got %.0f", expectedAmount, webhookData.Amount)
+		errorMsg := fmt.Sprintf("Amount mismatch: expected %.0f, got %.0f", expectedAmount, amount)
 		config.Db.Model(&logEntry).Updates(map[string]interface{}{
 			"processing_status":  "failed",
 			"error_message":      errorMsg,
@@ -422,7 +438,7 @@ func SepayWebhookHandler(c *gin.Context) {
 	}
 
 	// Cập nhật trạng thái đơn hàng thành paid
-	err = paymentService.UpdateOrderStatus(order.ID, "paid", &webhookData.TransactionID)
+	err = paymentService.UpdateOrderStatus(order.ID, "paid", &transactionID)
 	if err != nil {
 		// Cập nhật log với lỗi update order status
 		errorMsg := "Failed to update order status: " + err.Error()
@@ -440,8 +456,8 @@ func SepayWebhookHandler(c *gin.Context) {
 	creditService := service.NewCreditService()
 	amountUSD, _ := order.AmountUSD.Float64()
 	err = creditService.AddCredits(order.UserID, amountUSD,
-		fmt.Sprintf("Nạp credit qua Sepay - %s", webhookData.OrderCode),
-		webhookData.TransactionID)
+		fmt.Sprintf("Nạp credit qua Sepay - %s", orderCode),
+		transactionID)
 	if err != nil {
 		// Cập nhật log với lỗi add credits
 		errorMsg := "Failed to add credits: " + err.Error()
@@ -463,7 +479,7 @@ func SepayWebhookHandler(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":    "Payment processed successfully",
-		"order_code": webhookData.OrderCode,
+		"order_code": orderCode,
 		"status":     "paid",
 	})
 }

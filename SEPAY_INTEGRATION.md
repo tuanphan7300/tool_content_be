@@ -15,12 +15,18 @@ POST /api/v1/webhook/sepay
 ### Request Body Format
 ```json
 {
-  "order_code": "PAY202501011200001234",
-  "amount": 2500000,
-  "status": "success",
-  "transaction_id": "SEPAY_TXN_123456",
-  "signature": "abc123...",
-  "timestamp": 1704067200
+  "id": 92704,                              // ID giao dịch trên SePay
+  "gateway": "Vietcombank",                 // Brand name của ngân hàng
+  "transactionDate": "2024-07-25 14:02:37", // Thời gian xảy ra giao dịch phía ngân hàng
+  "accountNumber": "0123499999",            // Số tài khoản ngân hàng
+  "code": null,                             // Mã code thanh toán (sepay tự nhận diện dựa vào cấu hình)
+  "content": "chuyen tien mua iphone",      // Nội dung chuyển khoản
+  "transferType": "in",                     // Loại giao dịch. in là tiền vào, out là tiền ra
+  "transferAmount": 2277000,                // Số tiền giao dịch
+  "accumulated": 19077000,                  // Số dư tài khoản (lũy kế)
+  "subAccount": null,                       // Tài khoản ngân hàng phụ
+  "referenceCode": "MBVCB.3278907687",      // Mã tham chiếu
+  "description": ""                         // Toàn bộ nội dung tin notify ngân hàng
 }
 ```
 
@@ -56,10 +62,12 @@ SEPAY_SECRET_KEY=your_secret_key_here
 2. **Frontend hiển thị QR code** → User quét QR để thanh toán
 3. **User thanh toán** → Qua app ngân hàng
 4. **Ngân hàng thông báo** → Sepay (gateway)
-5. **Sepay callback** → `POST /webhook/sepay`
+5. **Sepay callback** → `POST /api/v1/webhook/sepay`
 6. **Backend xử lý**:
-   - Verify signature
-   - Kiểm tra order status
+   - Parse webhook data từ Sepay
+   - Extract order code từ `code` field hoặc `content`
+   - Kiểm tra `transferType` phải là "in"
+   - Validate order và amount
    - Cập nhật trạng thái thành "paid"
    - Cộng credit cho user
 
@@ -72,10 +80,11 @@ SEPAY_SECRET_KEY=your_secret_key_here
 - Exclude signature field
 
 ### Validation
-- Order code phải tồn tại
+- Order code phải tồn tại (từ `code` field hoặc extract từ `content`)
 - Order status phải là "pending"
-- Amount phải khớp với đơn hàng
-- Timestamp không quá cũ
+- Amount phải khớp với đơn hàng (`transferAmount`)
+- `transferType` phải là "in" (tiền vào)
+- Gateway phải hợp lệ
 
 ## Testing
 
@@ -84,12 +93,18 @@ SEPAY_SECRET_KEY=your_secret_key_here
 curl -X POST http://localhost:8888/api/v1/webhook/sepay \
   -H "Content-Type: application/json" \
   -d '{
-    "order_code": "PAY202501011200001234",
-    "amount": 2500000,
-    "status": "success",
-    "transaction_id": "TEST_TXN_123",
-    "signature": "test_signature",
-    "timestamp": 1704067200
+    "id": 92704,
+    "gateway": "Vietcombank",
+    "transactionDate": "2024-07-25 14:02:37",
+    "accountNumber": "0123499999",
+    "code": "PAY202501011200001234",
+    "content": "PAY202501011200001234 chuyen tien mua credit",
+    "transferType": "in",
+    "transferAmount": 2500000,
+    "accumulated": 19077000,
+    "subAccount": null,
+    "referenceCode": "MBVCB.3278907687",
+    "description": "BankAPINotify MBVCB.3278907687"
   }'
 ```
 

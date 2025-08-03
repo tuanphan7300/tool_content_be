@@ -974,68 +974,11 @@ func TikTokOptimizerHandler(c *gin.Context) {
 		return
 	}
 
-	// Map language codes to language names
-	languageMap := map[string]string{
-		"vi": "Tiếng Việt",
-		"en": "Tiếng Anh",
-		"ja": "Tiếng Nhật",
-		"ko": "Tiếng Hàn",
-		"zh": "Tiếng Trung",
-		"fr": "Tiếng Pháp",
-		"de": "Tiếng Đức",
-		"es": "Tiếng Tây Ban Nha",
-	}
+	// Language mapping for analysis
 
-	languageName := languageMap[targetLanguage]
-	if languageName == "" {
-		languageName = "Tiếng Việt" // Default fallback
-	}
-
-	prompt := fmt.Sprintf(`Phân tích video TikTok và đưa ra gợi ý tối ưu. TRẢ VỀ KẾT QUẢ BẰNG %s:
-
-Video transcript: %s
-Thời lượng: %.1f giây
-Caption hiện tại: %s
-Target audience: %s
-
-Hãy phân tích và đưa ra (TẤT CẢ BẰNG %s):
-
-1. HOOK SCORE (0-100): Đánh giá độ mạnh của hook trong 3 giây đầu
-2. OPTIMIZATION TIPS: 3-5 tips để tối ưu video (bằng %s)
-3. TRENDING HASHTAGS: 10 hashtags trending phù hợp
-4. SUGGESTED CAPTION: Caption tối ưu cho TikTok (bằng %s)
-5. BEST POSTING TIME: Thời gian đăng tốt nhất
-6. VIRAL POTENTIAL: Điểm viral tiềm năng (0-100)
-7. ENGAGEMENT PROMPTS: 3 câu hỏi để tăng engagement (bằng %s)
-8. CALL TO ACTION: Gợi ý CTA hiệu quả (bằng %s)
-
-LƯU Ý: Tất cả nội dung phải bằng %s, chỉ có hashtags có thể có tiếng Anh.
-
-QUAN TRỌNG: Chỉ trả về JSON thuần túy, không có text giải thích thêm.
-
-{
-  "hook_score": 85,
-  "optimization_tips": ["Gợi ý 1 bằng %s", "Gợi ý 2 bằng %s", "Gợi ý 3 bằng %s"],
-  "trending_hashtags": ["#hashtag1", "#hashtag2"],
-  "suggested_caption": "Caption tối ưu bằng %s...",
-  "best_posting_time": "19:00-21:00",
-  "viral_potential": 75,
-  "engagement_prompts": ["Câu hỏi 1 bằng %s?", "Câu hỏi 2 bằng %s?"],
-  "call_to_action": "Follow để xem thêm!"
-}`, languageName, transcript, duration, currentCaption, targetAudience, languageName, languageName, languageName, languageName, languageName, languageName, languageName, languageName, languageName, languageName, languageName, languageName, languageName)
-
-	// --- TÍNH PHÍ GPT ---
-	gptTokens := len([]rune(prompt)) / 4
-	if gptTokens < 1 {
-		gptTokens = 1
-	}
-	gptCost, _, err := pricingService.CalculateGPTCost(prompt)
-	if err != nil {
-		config.Db.Model(processStatus).Update("status", "failed")
-		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to calculate GPT cost"})
-		return
-	}
+	// --- TÍNH PHÍ CHO TIKTOK OPTIMIZATION ---
+	// Ước tính cost dựa trên độ phức tạp của analysis
+	gptCost := whisperCost * 0.5 // Giảm cost vì sử dụng hybrid approach
 
 	// --- LOCK CREDIT TRƯỚC KHI XỬ LÝ ---
 	totalCost := whisperCost + gptCost
@@ -1057,41 +1000,33 @@ QUAN TRỌNG: Chỉ trả về JSON thuần túy, không có text giải thích 
 		}
 	}()
 
-	// --- GỌI GPT ĐỂ PHÂN TÍCH ---
-	analysisRaw, err := service.GenerateTikTokOptimization(prompt, apiKey)
+	// --- SỬ DỤNG SERVICE HYBRID MỚI CHO TIKTOK OPTIMIZATION ---
+	analysisResult, err := service.GenerateAdvancedTikTokOptimization(transcript, currentCaption, targetAudience, targetLanguage, duration)
 	if err != nil {
-		creditService.UnlockCredits(userID, totalCost, "tiktok-optimize", "Unlock due to GPT error", nil)
+		creditService.UnlockCredits(userID, totalCost, "tiktok-optimize", "Unlock due to analysis error", nil)
 		config.Db.Model(processStatus).Update("status", "failed")
 		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Analysis error: " + err.Error()})
 		return
 	}
 
-	// --- TIẾP TỤC XỬ LÝ VÀ TRẢ KẾT QUẢ NHƯ CŨ ---
-	var analysis interface{} = analysisRaw
-	var result map[string]interface{}
-	if s, ok := analysis.(string); ok {
-		// Tìm JSON trong response (có thể có text thêm)
-		jsonStart := strings.Index(s, "{")
-		jsonEnd := strings.LastIndex(s, "}")
-		if jsonStart >= 0 && jsonEnd > jsonStart {
-			jsonStr := s[jsonStart : jsonEnd+1]
-			if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
-				util.CleanupDir(videoDir)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT response parse error"})
-				return
-			}
-		} else {
-			util.CleanupDir(videoDir)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "No JSON found in GPT response"})
-			return
-		}
-	} else if m, ok := analysis.(map[string]interface{}); ok {
-		result = m
-	} else {
-		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT response type error"})
-		return
+	// Convert analysis result to map for compatibility
+	result := map[string]interface{}{
+		"hook_score":         analysisResult.HookScore,
+		"viral_potential":    analysisResult.ViralPotential,
+		"optimization_tips":  analysisResult.OptimizationTips,
+		"trending_hashtags":  analysisResult.TrendingHashtags,
+		"suggested_caption":  analysisResult.SuggestedCaption,
+		"best_posting_time":  analysisResult.BestPostingTime,
+		"engagement_prompts": analysisResult.EngagementPrompts,
+		"call_to_action":     analysisResult.CallToAction,
+		"content_category":   analysisResult.ContentCategory,
+		"target_audience":    analysisResult.TargetAudience,
+		"trending_topics":    analysisResult.TrendingTopics,
+		"video_pacing":       analysisResult.VideoPacing,
+		"thumbnail_tips":     analysisResult.ThumbnailTips,
+		"sound_suggestions":  analysisResult.SoundSuggestions,
+		"analysis_method":    analysisResult.AnalysisMethod,
 	}
 
 	// Lưu history
@@ -1106,13 +1041,13 @@ QUAN TRỌNG: Chỉ trả về JSON thuần túy, không có text giải thích 
 		CreatedAt:           time.Now(),
 	}
 	// Gán các trường TikTok Optimizer nếu có
-	if v, ok := result["hook_score"].(float64); ok {
-		captionHistory.HookScore = int(v)
+	if v, ok := result["hook_score"].(int); ok {
+		captionHistory.HookScore = v
 	}
-	if v, ok := result["viral_potential"].(float64); ok {
-		captionHistory.ViralPotential = int(v)
+	if v, ok := result["viral_potential"].(int); ok {
+		captionHistory.ViralPotential = v
 	}
-	if v, ok := result["trending_hashtags"].([]interface{}); ok {
+	if v, ok := result["trending_hashtags"].([]string); ok {
 		b, _ := json.Marshal(v)
 		captionHistory.TrendingHashtags = datatypes.JSON(b)
 	}
@@ -1122,11 +1057,11 @@ QUAN TRỌNG: Chỉ trả về JSON thuần túy, không có text giải thích 
 	if v, ok := result["best_posting_time"].(string); ok {
 		captionHistory.BestPostingTime = v
 	}
-	if v, ok := result["optimization_tips"].([]interface{}); ok {
+	if v, ok := result["optimization_tips"].([]string); ok {
 		b, _ := json.Marshal(v)
 		captionHistory.OptimizationTips = datatypes.JSON(b)
 	}
-	if v, ok := result["engagement_prompts"].([]interface{}); ok {
+	if v, ok := result["engagement_prompts"].([]string); ok {
 		b, _ := json.Marshal(v)
 		captionHistory.EngagementPrompts = datatypes.JSON(b)
 	}
@@ -1151,7 +1086,7 @@ QUAN TRỌNG: Chỉ trả về JSON thuần túy, không có text giải thích 
 		})
 		return
 	}
-	err = creditService.DeductCredits(userID, gptCost, "gpt_3.5_turbo", "GPT TikTok Optimization", &captionHistory.ID, "per_token", float64(gptTokens))
+	err = creditService.DeductCredits(userID, gptCost, "tiktok_optimize", "TikTok Optimization Hybrid", &captionHistory.ID, "per_request", 1.0)
 	if err != nil {
 		config.Db.Model(processStatus).Update("status", "failed")
 		util.CleanupDir(videoDir)
@@ -1162,11 +1097,12 @@ QUAN TRỌNG: Chỉ trả về JSON thuần túy, không có text giải thích 
 		return
 	}
 
-	// Trả về đúng các trường từ GPT
+	// Trả về kết quả với các trường mới
 	result["transcript"] = transcript
 	result["segments"] = segments
 	result["id"] = captionHistory.ID
 	result["process_id"] = processStatus.ID
+	result["duration"] = duration
 	config.Db.Model(processStatus).Updates(map[string]interface{}{
 		"status":      "completed",
 		"CompletedAt": time.Now(),

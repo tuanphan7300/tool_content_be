@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,6 +20,54 @@ import (
 )
 
 func ProcessHandler(c *gin.Context) {
+	// Lấy file trước để kiểm tra sớm
+	file, err := c.FormFile("file")
+	if err != nil {
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
+		return
+	}
+
+	// Kiểm tra kích thước file không quá 100MB
+	if file.Size > 100*1024*1024 {
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileTooLarge, nil)
+		return
+	}
+
+	// Tạo thư mục tạm để kiểm tra duration
+	timestamp := time.Now().UnixNano()
+	baseName := strings.TrimSuffix(filepath.Base(file.Filename), filepath.Ext(file.Filename))
+	uniqueName := fmt.Sprintf("%d_%s%s", timestamp, baseName, filepath.Ext(file.Filename))
+	tempDir := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName)))
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		util.HandleError(c, http.StatusInternalServerError, util.ErrDirectoryCreation, err)
+		return
+	}
+
+	// Lưu file tạm để kiểm tra duration
+	tempVideoPath := filepath.Join(tempDir, uniqueName)
+	if err := c.SaveUploadedFile(file, tempVideoPath); err != nil {
+		util.CleanupDir(tempDir)
+		util.HandleError(c, http.StatusInternalServerError, util.ErrFileUploadFailed, err)
+		return
+	}
+
+	// Tách audio tạm để kiểm tra duration
+	tempAudioPath, err := util.ProcessfileToDir(c, file, tempDir)
+	if err != nil {
+		util.CleanupDir(tempDir)
+		util.HandleError(c, http.StatusInternalServerError, util.ErrProcessingFailed, err)
+		return
+	}
+
+	// Kiểm tra duration < 7 phút
+	duration, _ := util.GetAudioDuration(tempAudioPath)
+	if duration > 420 {
+		util.CleanupDir(tempDir)
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileDurationTooLong, nil)
+		return
+	}
+
+	// Nếu pass tất cả kiểm tra, tiếp tục xử lý
 	configg := config.InfaConfig{}
 	configg.LoadConfig()
 	apiKey := configg.ApiKey
@@ -26,50 +75,21 @@ func ProcessHandler(c *gin.Context) {
 	// Lấy user_id từ token
 	userID := c.GetUint("user_id")
 	if userID == 0 {
+		util.CleanupDir(tempDir)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
-	file, err := c.FormFile("file")
-	if err != nil {
-		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
-		return
-	}
-	// Kiểm tra kích thước file không quá 100MB
-	if file.Size > 100*1024*1024 {
-		util.HandleError(c, http.StatusBadRequest, util.ErrFileTooLarge, nil)
-		return
+	// Get target language parameter (default to Vietnamese if not provided)
+	targetLanguage := c.PostForm("target_language")
+	if targetLanguage == "" {
+		targetLanguage = "vi" // Default to Vietnamese
 	}
 
-	// Tạo thư mục riêng cho video process
-	timestamp := time.Now().UnixNano()
-	baseName := strings.TrimSuffix(filepath.Base(file.Filename), filepath.Ext(file.Filename))
-	uniqueName := fmt.Sprintf("%d_%s%s", timestamp, baseName, filepath.Ext(file.Filename))
-	videoDir := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName)))
-	if err := os.MkdirAll(videoDir, 0755); err != nil {
-		util.HandleError(c, http.StatusInternalServerError, util.ErrDirectoryCreation, err)
-		return
-	}
-	videoPath := filepath.Join(videoDir, uniqueName)
-	if err := c.SaveUploadedFile(file, videoPath); err != nil {
-		util.CleanupDir(videoDir)
-		util.HandleError(c, http.StatusInternalServerError, util.ErrFileUploadFailed, err)
-		return
-	}
-	// Tách audio từ video vào đúng thư mục
-	audioPath, err := util.ProcessfileToDir(c, file, videoDir)
-	if err != nil {
-		util.CleanupDir(videoDir)
-		util.HandleError(c, http.StatusInternalServerError, util.ErrProcessingFailed, err)
-		return
-	}
-	// Kiểm tra duration < 7 phút
-	duration, _ := util.GetAudioDuration(audioPath)
-	if duration > 420 {
-		util.CleanupDir(videoDir)
-		util.HandleError(c, http.StatusBadRequest, util.ErrFileDurationTooLong, nil)
-		return
-	}
+	// Sử dụng thư mục tạm đã tạo
+	videoDir := tempDir
+	videoPath := tempVideoPath
+	audioPath := tempAudioPath
 
 	// Khởi tạo services
 	pricingService := service.NewPricingService()
@@ -144,7 +164,7 @@ func ProcessHandler(c *gin.Context) {
 	}
 
 	// Gọi GPT để gợi ý caption & hashtag
-	captionsAndHashtag, err := service.GenerateCaptionWithService(transcript, apiKey, gptServiceName, gptModelAPIName)
+	captionsAndHashtag, err := service.GenerateCaptionWithService(transcript, apiKey, gptServiceName, gptModelAPIName, targetLanguage)
 	if err != nil {
 		util.CleanupDir(videoDir)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT error"})
@@ -450,7 +470,7 @@ func ProcessVideoHandler(c *gin.Context) {
 		// Translate the original SRT file using the configured service (Gemini or GPT)
 		if strings.Contains(serviceName, "gpt") {
 			// Use GPT for translation
-			translatedSRTContent, err = service.TranslateSRTFileWithGPT(originalSRTPath, apiKey, srtModelAPIName)
+			translatedSRTContent, err = service.TranslateSRTFileWithGPT(originalSRTPath, apiKey, srtModelAPIName, targetLanguage)
 		} else {
 			// Use Gemini for translation (default)
 			translatedSRTContent, err = service.TranslateSRTFileWithModelAndLanguage(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
@@ -797,7 +817,8 @@ func GenerateCaptionHandler(c *gin.Context) {
 	}
 
 	var req struct {
-		Transcript string `json:"transcript" binding:"required"`
+		Transcript     string `json:"transcript" binding:"required"`
+		TargetLanguage string `json:"target_language"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -805,8 +826,13 @@ func GenerateCaptionHandler(c *gin.Context) {
 		return
 	}
 
+	// Default to Vietnamese if not provided
+	if req.TargetLanguage == "" {
+		req.TargetLanguage = "vi"
+	}
+
 	// Gọi GPT để gợi ý caption & hashtag
-	captionsAndHashtag, err := service.GenerateSuggestion(req.Transcript, apiKey)
+	captionsAndHashtag, err := service.GenerateSuggestion(req.Transcript, apiKey, req.TargetLanguage)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT error"})
 		return
@@ -819,6 +845,54 @@ func GenerateCaptionHandler(c *gin.Context) {
 
 // TikTokOptimizerHandler phân tích và tối ưu video cho TikTok
 func TikTokOptimizerHandler(c *gin.Context) {
+	// Lấy file trước để kiểm tra sớm
+	file, err := c.FormFile("file")
+	if err != nil {
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
+		return
+	}
+
+	// Kiểm tra kích thước file không quá 100MB
+	if file.Size > 100*1024*1024 {
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileTooLarge, nil)
+		return
+	}
+
+	// Tạo thư mục tạm để kiểm tra duration
+	timestamp := time.Now().UnixNano()
+	baseName := strings.TrimSuffix(filepath.Base(file.Filename), filepath.Ext(file.Filename))
+	uniqueName := fmt.Sprintf("%d_%s%s", timestamp, baseName, filepath.Ext(file.Filename))
+	tempDir := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName)))
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		util.HandleError(c, http.StatusInternalServerError, util.ErrDirectoryCreation, err)
+		return
+	}
+
+	// Lưu file tạm để kiểm tra duration
+	tempVideoPath := filepath.Join(tempDir, uniqueName)
+	if err := c.SaveUploadedFile(file, tempVideoPath); err != nil {
+		util.CleanupDir(tempDir)
+		util.HandleError(c, http.StatusInternalServerError, util.ErrFileUploadFailed, err)
+		return
+	}
+
+	// Tách audio tạm để kiểm tra duration
+	tempAudioPath, err := util.ProcessfileToDir(c, file, tempDir)
+	if err != nil {
+		util.CleanupDir(tempDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract audio"})
+		return
+	}
+
+	// Kiểm tra duration < 7 phút
+	duration, _ := util.GetAudioDuration(tempAudioPath)
+	if duration > 420 {
+		util.CleanupDir(tempDir)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 7 phút."})
+		return
+	}
+
+	// Nếu pass tất cả kiểm tra, tiếp tục xử lý
 	configg := config.InfaConfig{}
 	configg.LoadConfig()
 	apiKey := configg.ApiKey
@@ -826,6 +900,7 @@ func TikTokOptimizerHandler(c *gin.Context) {
 	// Lấy user_id từ token
 	userID := c.GetUint("user_id")
 	if userID == 0 {
+		util.CleanupDir(tempDir)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
@@ -835,8 +910,9 @@ func TikTokOptimizerHandler(c *gin.Context) {
 
 	// Kiểm tra trạng thái process TikTok Optimizer đang chạy
 	var existingProcess config.UserProcessStatus
-	err := config.Db.Where("user_id = ? AND process_type = ? AND status = ?", userID, "tiktok-optimize", "processing").First(&existingProcess).Error
+	err = config.Db.Where("user_id = ? AND process_type = ? AND status = ?", userID, "tiktok-optimize", "processing").First(&existingProcess).Error
 	if err == nil {
+		util.CleanupDir(tempDir)
 		c.JSON(http.StatusConflict, gin.H{"error": "Bạn đang có một quá trình TikTok Optimizer đang chạy. Vui lòng chờ hoàn thành trước khi upload mới."})
 		return
 	}
@@ -849,6 +925,7 @@ func TikTokOptimizerHandler(c *gin.Context) {
 		StartedAt:   time.Now(),
 	}
 	if err := config.Db.Create(&processStatus).Error; err != nil {
+		util.CleanupDir(tempDir)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo trạng thái process"})
 		return
 	}
@@ -860,11 +937,10 @@ func TikTokOptimizerHandler(c *gin.Context) {
 		}
 	}()
 
-	file, err := c.FormFile("file")
-	if err != nil {
-		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
-		return
-	}
+	// Sử dụng thư mục tạm đã tạo
+	videoDir := tempDir
+	videoPath := tempVideoPath
+	audioPath := tempAudioPath
 
 	// Get target language parameter (default to Vietnamese if not provided)
 	targetLanguage := c.PostForm("target_language")
@@ -877,36 +953,6 @@ func TikTokOptimizerHandler(c *gin.Context) {
 	targetAudience := c.PostForm("target_audience")
 	if targetAudience == "" {
 		targetAudience = "general"
-	}
-
-	// Tạo thư mục riêng cho video TikTok Optimizer
-	timestamp := time.Now().UnixNano()
-	baseName := strings.TrimSuffix(filepath.Base(file.Filename), filepath.Ext(file.Filename))
-	uniqueName := fmt.Sprintf("%d_%s%s", timestamp, baseName, filepath.Ext(file.Filename))
-	videoDir := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName)))
-	if err := os.MkdirAll(videoDir, 0755); err != nil {
-		util.HandleError(c, http.StatusInternalServerError, util.ErrDirectoryCreation, err)
-		return
-	}
-	videoPath := filepath.Join(videoDir, uniqueName)
-	if err := c.SaveUploadedFile(file, videoPath); err != nil {
-		util.CleanupDir(videoDir)
-		util.HandleError(c, http.StatusInternalServerError, util.ErrFileUploadFailed, err)
-		return
-	}
-	// Tách audio từ video vào đúng thư mục
-	audioPath, err := util.ProcessfileToDir(c, file, videoDir)
-	if err != nil {
-		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract audio"})
-		return
-	}
-	// Kiểm tra duration < 7 phút
-	duration, _ := util.GetAudioDuration(audioPath)
-	if duration > 420 {
-		util.CleanupDir(videoDir)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 7 phút."})
-		return
 	}
 
 	// --- TÍNH PHÍ WHISPER ---
@@ -927,38 +973,56 @@ func TikTokOptimizerHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Whisper error"})
 		return
 	}
-	prompt := fmt.Sprintf(`Phân tích video TikTok và đưa ra gợi ý tối ưu. TRẢ VỀ KẾT QUẢ BẰNG TIẾNG VIỆT:
+
+	// Map language codes to language names
+	languageMap := map[string]string{
+		"vi": "Tiếng Việt",
+		"en": "Tiếng Anh",
+		"ja": "Tiếng Nhật",
+		"ko": "Tiếng Hàn",
+		"zh": "Tiếng Trung",
+		"fr": "Tiếng Pháp",
+		"de": "Tiếng Đức",
+		"es": "Tiếng Tây Ban Nha",
+	}
+
+	languageName := languageMap[targetLanguage]
+	if languageName == "" {
+		languageName = "Tiếng Việt" // Default fallback
+	}
+
+	prompt := fmt.Sprintf(`Phân tích video TikTok và đưa ra gợi ý tối ưu. TRẢ VỀ KẾT QUẢ BẰNG %s:
 
 Video transcript: %s
 Thời lượng: %.1f giây
 Caption hiện tại: %s
 Target audience: %s
 
-Hãy phân tích và đưa ra (TẤT CẢ BẰNG TIẾNG VIỆT):
+Hãy phân tích và đưa ra (TẤT CẢ BẰNG %s):
 
 1. HOOK SCORE (0-100): Đánh giá độ mạnh của hook trong 3 giây đầu
-2. OPTIMIZATION TIPS: 3-5 tips để tối ưu video (bằng tiếng Việt)
+2. OPTIMIZATION TIPS: 3-5 tips để tối ưu video (bằng %s)
 3. TRENDING HASHTAGS: 10 hashtags trending phù hợp
-4. SUGGESTED CAPTION: Caption tối ưu cho TikTok (bằng tiếng Việt)
+4. SUGGESTED CAPTION: Caption tối ưu cho TikTok (bằng %s)
 5. BEST POSTING TIME: Thời gian đăng tốt nhất
 6. VIRAL POTENTIAL: Điểm viral tiềm năng (0-100)
-7. ENGAGEMENT PROMPTS: 3 câu hỏi để tăng engagement (bằng tiếng Việt)
-8. CALL TO ACTION: Gợi ý CTA hiệu quả (bằng tiếng Việt)
+7. ENGAGEMENT PROMPTS: 3 câu hỏi để tăng engagement (bằng %s)
+8. CALL TO ACTION: Gợi ý CTA hiệu quả (bằng %s)
 
-LƯU Ý: Tất cả nội dung phải bằng tiếng Việt, chỉ có hashtags có thể có tiếng Anh.
+LƯU Ý: Tất cả nội dung phải bằng %s, chỉ có hashtags có thể có tiếng Anh.
 
 QUAN TRỌNG: Chỉ trả về JSON thuần túy, không có text giải thích thêm.
 
 {
   "hook_score": 85,
-  "optimization_tips": ["Gợi ý 1 bằng tiếng Việt", "Gợi ý 2 bằng tiếng Việt", "Gợi ý 3 bằng tiếng Việt"],
+  "optimization_tips": ["Gợi ý 1 bằng %s", "Gợi ý 2 bằng %s", "Gợi ý 3 bằng %s"],
   "trending_hashtags": ["#hashtag1", "#hashtag2"],
-  "suggested_caption": "Caption tối ưu bằng tiếng Việt...",
+  "suggested_caption": "Caption tối ưu bằng %s...",
   "best_posting_time": "19:00-21:00",
   "viral_potential": 75,
-  "engagement_prompts": ["Câu hỏi 1 bằng tiếng Việt?", "Câu hỏi 2 bằng tiếng Việt?"],
+  "engagement_prompts": ["Câu hỏi 1 bằng %s?", "Câu hỏi 2 bằng %s?"],
   "call_to_action": "Follow để xem thêm!"
-}`, transcript, duration, currentCaption, targetAudience)
+}`, languageName, transcript, duration, currentCaption, targetAudience, languageName, languageName, languageName, languageName, languageName, languageName, languageName, languageName, languageName, languageName, languageName, languageName, languageName)
 
 	// --- TÍNH PHÍ GPT ---
 	gptTokens := len([]rune(prompt)) / 4
@@ -1113,6 +1177,18 @@ QUAN TRỌNG: Chỉ trả về JSON thuần túy, không có text giải thích 
 
 // CreateSubtitleHandler tạo file SRT từ video
 func CreateSubtitleHandler(c *gin.Context) {
+	// Lấy thông tin file đã validate từ middleware
+	videoFileInterface, exists := c.Get("validated_file")
+	if !exists {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File chưa được validate"})
+		return
+	}
+	videoFile := videoFileInterface.(*multipart.FileHeader)
+
+	tempDir := c.GetString("temp_dir")
+	tempAudioPath := c.GetString("temp_audio_path")
+
+	// Nếu pass tất cả kiểm tra, tiếp tục xử lý
 	configg := config.InfaConfig{}
 	configg.LoadConfig()
 	apiKey := configg.ApiKey
@@ -1121,6 +1197,7 @@ func CreateSubtitleHandler(c *gin.Context) {
 	// Lấy user_id từ token
 	userID := c.GetUint("user_id")
 	if userID == 0 {
+		util.CleanupDir(tempDir)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
@@ -1131,6 +1208,7 @@ func CreateSubtitleHandler(c *gin.Context) {
 	// Lấy process status từ middleware
 	processStatusInterface, exists := c.Get("process_status")
 	if !exists {
+		util.CleanupDir(tempDir)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy trạng thái process"})
 		return
 	}
@@ -1144,23 +1222,9 @@ func CreateSubtitleHandler(c *gin.Context) {
 		}
 	}()
 
-	// Lấy file video
-	videoFile, err := c.FormFile("file")
-	if err != nil {
-		config.Db.Model(processStatus).Update("status", "failed")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Không tìm thấy file video"})
-		return
-	}
-
-	// Validate file type
-	if !strings.HasSuffix(strings.ToLower(videoFile.Filename), ".mp4") &&
-		!strings.HasSuffix(strings.ToLower(videoFile.Filename), ".avi") &&
-		!strings.HasSuffix(strings.ToLower(videoFile.Filename), ".mov") &&
-		!strings.HasSuffix(strings.ToLower(videoFile.Filename), ".mkv") {
-		config.Db.Model(processStatus).Update("status", "failed")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ hỗ trợ file video (mp4, avi, mov, mkv)"})
-		return
-	}
+	// Sử dụng thư mục tạm đã tạo
+	videoDir := tempDir
+	audioPath := tempAudioPath
 
 	// Lấy các tham số
 	targetLanguage := c.PostForm("target_language")
@@ -1169,34 +1233,6 @@ func CreateSubtitleHandler(c *gin.Context) {
 	}
 
 	isBilingual := c.PostForm("is_bilingual") == "true"
-
-	// Tạo thư mục làm việc
-	uniqueName := fmt.Sprintf("%d_%s", time.Now().UnixNano(), strings.TrimSuffix(videoFile.Filename, filepath.Ext(videoFile.Filename)))
-	videoDir := filepath.Join("storage", uniqueName)
-	if err := os.MkdirAll(videoDir, 0755); err != nil {
-		config.Db.Model(processStatus).Update("status", "failed")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo thư mục làm việc"})
-		return
-	}
-	// Không cleanup ngay, chỉ cleanup khi có lỗi
-
-	// Lưu file video
-	videoPath := filepath.Join(videoDir, videoFile.Filename)
-	if err := c.SaveUploadedFile(videoFile, videoPath); err != nil {
-		config.Db.Model(processStatus).Update("status", "failed")
-		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lưu file video"})
-		return
-	}
-
-	// Trích xuất audio từ video
-	audioPath, err := service.ProcessVideoToAudio(videoPath, videoDir)
-	if err != nil {
-		config.Db.Model(processStatus).Update("status", "failed")
-		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Không thể trích xuất audio: %v", err)})
-		return
-	}
 
 	// Tính toán chi phí Whisper
 	whisperCost, err := pricingService.CalculateWhisperCost(1.0) // Ước tính 1 phút
@@ -1274,7 +1310,8 @@ func CreateSubtitleHandler(c *gin.Context) {
 
 	// Tạo file SRT gốc
 	originalSRTContent := createSRT(segments)
-	originalSRTPath := filepath.Join(videoDir, uniqueName+"_original.srt")
+	baseName := strings.TrimSuffix(filepath.Base(videoFile.Filename), filepath.Ext(videoFile.Filename))
+	originalSRTPath := filepath.Join(videoDir, baseName+"_original.srt")
 	if err := os.WriteFile(originalSRTPath, []byte(originalSRTContent), 0644); err != nil {
 		creditService.UnlockCredits(userID, totalCost, "create-subtitle", "Unlock credits due to SRT save error", nil)
 		config.Db.Model(processStatus).Update("status", "failed")
@@ -1314,7 +1351,7 @@ func CreateSubtitleHandler(c *gin.Context) {
 		// Dịch SRT theo service được chọn
 		var translatedSRTContent string
 		if strings.Contains(serviceName, "gpt") {
-			translatedSRTContent, err = service.TranslateSRTFileWithGPT(originalSRTPath, apiKey, srtModelAPIName)
+			translatedSRTContent, err = service.TranslateSRTFileWithGPT(originalSRTPath, apiKey, srtModelAPIName, targetLanguage)
 		} else {
 			translatedSRTContent, err = service.TranslateSRTFileWithModelAndLanguage(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
 		}
@@ -1327,7 +1364,7 @@ func CreateSubtitleHandler(c *gin.Context) {
 		}
 
 		// Lưu file SRT đã dịch
-		translatedSRTPath = filepath.Join(videoDir, uniqueName+"_"+targetLanguage+".srt")
+		translatedSRTPath = filepath.Join(videoDir, baseName+"_"+targetLanguage+".srt")
 		if err := os.WriteFile(translatedSRTPath, []byte(translatedSRTContent), 0644); err != nil {
 			creditService.UnlockCredits(userID, totalCost, "create-subtitle", "Unlock credits due to translated SRT save error", nil)
 			config.Db.Model(processStatus).Update("status", "failed")

@@ -17,9 +17,68 @@ import (
 
 // BurnSubHandler nhận video + sub, lưu file, trả về process_id
 func BurnSubHandler(c *gin.Context) {
+	// Nhận file video trước để kiểm tra sớm
+	videoFile, err := c.FormFile("file")
+	if err != nil {
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
+		return
+	}
+
+	// Kiểm tra kích thước file không quá 100MB
+	if videoFile.Size > 100*1024*1024 {
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileTooLarge, nil)
+		return
+	}
+
+	// Nhận file sub
+	subFile, err := c.FormFile("subtitle")
+	if err != nil {
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
+		return
+	}
+	if !(strings.HasSuffix(subFile.Filename, ".srt") || strings.HasSuffix(subFile.Filename, ".ass")) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ hỗ trợ file phụ đề .srt hoặc .ass"})
+		return
+	}
+
+	// Tạo thư mục tạm để kiểm tra duration
+	timestamp := time.Now().UnixNano()
+	baseName := strings.TrimSuffix(filepath.Base(videoFile.Filename), filepath.Ext(videoFile.Filename))
+	uniqueName := fmt.Sprintf("%d_%s%s", timestamp, baseName, filepath.Ext(videoFile.Filename))
+	tempDir := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName)))
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create video directory"})
+		return
+	}
+
+	// Lưu file video tạm để kiểm tra duration
+	safeVideoName := strings.ReplaceAll(videoFile.Filename, " ", "_")
+	tempVideoPath := filepath.Join(tempDir, safeVideoName)
+	if err := c.SaveUploadedFile(videoFile, tempVideoPath); err != nil {
+		util.CleanupDir(tempDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save video file"})
+		return
+	}
+
+	// Kiểm tra duration < 7 phút
+	tempAudioPath, err := util.ProcessfileToDir(c, videoFile, tempDir)
+	if err != nil {
+		util.CleanupDir(tempDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract audio"})
+		return
+	}
+	duration, _ := util.GetAudioDuration(tempAudioPath)
+	if duration > 420 {
+		util.CleanupDir(tempDir)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 7 phút."})
+		return
+	}
+
+	// Nếu pass tất cả kiểm tra, tiếp tục xử lý
 	// Lấy user_id từ token
 	userID := c.GetUint("user_id")
 	if userID == 0 {
+		util.CleanupDir(tempDir)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
@@ -35,8 +94,9 @@ func BurnSubHandler(c *gin.Context) {
 	// --- TÍNH PHÍ burn-sub ---
 	// Lấy pricing từ database
 	var burnSubPricing config.ServicePricing
-	err := config.Db.Where("service_name = ? AND is_active = ?", "burn-sub", true).First(&burnSubPricing).Error
+	err = config.Db.Where("service_name = ? AND is_active = ?", "burn-sub", true).First(&burnSubPricing).Error
 	if err != nil {
+		util.CleanupDir(tempDir)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get burn-sub pricing"})
 		return
 	}
@@ -44,6 +104,7 @@ func BurnSubHandler(c *gin.Context) {
 	// --- LOCK CREDIT TRƯỚC KHI XỬ LÝ ---
 	_, err = creditService.LockCredits(userID, burnSubPricing.PricePerUnit, "burn-sub", "Lock credit for burn subtitle", nil)
 	if err != nil {
+		util.CleanupDir(tempDir)
 		c.JSON(http.StatusPaymentRequired, gin.H{
 			"error":   "Không đủ credit để burn subtitle",
 			"warning": "Số dư tài khoản của bạn không đủ để sử dụng dịch vụ này. Vui lòng nạp thêm credit để tiếp tục sử dụng!",
@@ -58,50 +119,17 @@ func BurnSubHandler(c *gin.Context) {
 		}
 	}()
 
-	// Nhận file video
-	videoFile, err := c.FormFile("video")
-	if err != nil {
-		creditService.UnlockCredits(userID, burnSubPricing.PricePerUnit, "burn-sub", "Unlock due to missing video file", nil)
-		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
-		return
-	}
-	if videoFile.Size > 100*1024*1024 {
-		creditService.UnlockCredits(userID, burnSubPricing.PricePerUnit, "burn-sub", "Unlock due to file size limit", nil)
-		util.HandleError(c, http.StatusBadRequest, util.ErrFileTooLarge, nil)
-		return
-	}
+	// Sử dụng thư mục tạm đã tạo
+	videoDir := tempDir
+	videoPath := tempVideoPath
 
-	// Nhận file sub
-	subFile, err := c.FormFile("subtitle")
-	if err != nil {
-		creditService.UnlockCredits(userID, burnSubPricing.PricePerUnit, "burn-sub", "Unlock due to missing subtitle file", nil)
-		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
-		return
-	}
-	if !(strings.HasSuffix(subFile.Filename, ".srt") || strings.HasSuffix(subFile.Filename, ".ass")) {
-		creditService.UnlockCredits(userID, burnSubPricing.PricePerUnit, "burn-sub", "Unlock due to invalid subtitle format", nil)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ hỗ trợ file phụ đề .srt hoặc .ass"})
-		return
-	}
-
-	// Tạo thư mục lưu file
-	timestamp := time.Now().UnixNano()
-	baseName := strings.TrimSuffix(filepath.Base(videoFile.Filename), filepath.Ext(videoFile.Filename))
-	uniqueName := fmt.Sprintf("%d_%s%s", timestamp, baseName, filepath.Ext(videoFile.Filename))
-	videoDir := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName)))
-	if err := os.MkdirAll(videoDir, 0755); err != nil {
-		creditService.UnlockCredits(userID, burnSubPricing.PricePerUnit, "burn-sub", "Unlock due to directory creation error", nil)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create video directory"})
-		return
-	}
-
-	// Chuẩn hóa tên file video và sub
-	safeVideoName := strings.ReplaceAll(videoFile.Filename, " ", "_")
-	videoPath := filepath.Join(videoDir, safeVideoName)
-	if err := c.SaveUploadedFile(videoFile, videoPath); err != nil {
-		creditService.UnlockCredits(userID, burnSubPricing.PricePerUnit, "burn-sub", "Unlock due to video save error", nil)
+	// Lưu file sub vào thư mục tạm
+	safeSubName := strings.ReplaceAll(subFile.Filename, " ", "_")
+	subPath := filepath.Join(videoDir, safeSubName)
+	if err := c.SaveUploadedFile(subFile, subPath); err != nil {
+		creditService.UnlockCredits(userID, burnSubPricing.PricePerUnit, "burn-sub", "Unlock due to subtitle save error", nil)
 		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save video file"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save subtitle file"})
 		return
 	}
 	if _, err := os.Stat(videoPath); err != nil {
@@ -111,12 +139,10 @@ func BurnSubHandler(c *gin.Context) {
 		return
 	}
 
-	safeSubName := strings.ReplaceAll(subFile.Filename, " ", "_")
-	subPath := filepath.Join(videoDir, safeSubName)
-	if err := c.SaveUploadedFile(subFile, subPath); err != nil {
-		creditService.UnlockCredits(userID, burnSubPricing.PricePerUnit, "burn-sub", "Unlock due to subtitle save error", nil)
+	if _, err := os.Stat(subPath); err != nil {
+		creditService.UnlockCredits(userID, burnSubPricing.PricePerUnit, "burn-sub", "Unlock due to subtitle file not found", nil)
 		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save subtitle file"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Subtitle file not found after save"})
 		return
 	}
 	if _, err := os.Stat(subPath); err != nil {

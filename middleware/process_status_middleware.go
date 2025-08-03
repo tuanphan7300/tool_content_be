@@ -2,12 +2,93 @@ package middleware
 
 import (
 	"creator-tool-backend/service"
+	"creator-tool-backend/util"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )
+
+// FileValidationMiddleware kiểm tra file size và duration trước khi tạo process status
+func FileValidationMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Lấy file video
+		videoFile, err := c.FormFile("file")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Không tìm thấy file video"})
+			c.Abort()
+			return
+		}
+
+		// Kiểm tra kích thước file không quá 100MB
+		if videoFile.Size > 100*1024*1024 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "File quá lớn. Chỉ cho phép file dưới 100MB."})
+			c.Abort()
+			return
+		}
+
+		// Validate file type
+		if !strings.HasSuffix(strings.ToLower(videoFile.Filename), ".mp4") &&
+			!strings.HasSuffix(strings.ToLower(videoFile.Filename), ".avi") &&
+			!strings.HasSuffix(strings.ToLower(videoFile.Filename), ".mov") &&
+			!strings.HasSuffix(strings.ToLower(videoFile.Filename), ".mkv") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ hỗ trợ file video (mp4, avi, mov, mkv)"})
+			c.Abort()
+			return
+		}
+
+		// Tạo thư mục tạm để kiểm tra duration
+		timestamp := time.Now().UnixNano()
+		uniqueName := fmt.Sprintf("%d_%s", timestamp, strings.TrimSuffix(videoFile.Filename, filepath.Ext(videoFile.Filename)))
+		tempDir := filepath.Join("storage", uniqueName)
+		if err := os.MkdirAll(tempDir, 0755); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo thư mục làm việc"})
+			c.Abort()
+			return
+		}
+
+		// Lưu file video tạm để kiểm tra duration
+		tempVideoPath := filepath.Join(tempDir, videoFile.Filename)
+		if err := c.SaveUploadedFile(videoFile, tempVideoPath); err != nil {
+			util.CleanupDir(tempDir)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lưu file video"})
+			c.Abort()
+			return
+		}
+
+		// Trích xuất audio tạm để kiểm tra duration
+		tempAudioPath, err := service.ProcessVideoToAudio(tempVideoPath, tempDir)
+		if err != nil {
+			util.CleanupDir(tempDir)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Không thể trích xuất audio: %v", err)})
+			c.Abort()
+			return
+		}
+
+		// Kiểm tra duration < 7 phút
+		duration, _ := util.GetAudioDuration(tempAudioPath)
+		if duration > 420 {
+			util.CleanupDir(tempDir)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 7 phút."})
+			c.Abort()
+			return
+		}
+
+		// Lưu thông tin file đã validate vào context
+		c.Set("validated_file", videoFile)
+		c.Set("temp_dir", tempDir)
+		c.Set("temp_video_path", tempVideoPath)
+		c.Set("temp_audio_path", tempAudioPath)
+		c.Set("file_duration", duration)
+
+		c.Next()
+	}
+}
 
 // ProcessStatusMiddleware kiểm tra trạng thái process của user
 func ProcessStatusMiddleware(processType string) gin.HandlerFunc {

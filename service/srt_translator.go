@@ -244,6 +244,6 @@ File SRT gốc:
 
 // TranslateSRTFileWithGPT translates an SRT file using GPT
 // This is a wrapper function that calls the actual implementation in gpt.go
-func TranslateSRTFileWithGPT(srtFilePath, apiKey, modelName string) (string, error) {
-	return TranslateSRTWithGPT(srtFilePath, apiKey, modelName)
+func TranslateSRTFileWithGPT(srtFilePath, apiKey, modelName, targetLanguage string) (string, error) {
+	return TranslateSRTWithGPT(srtFilePath, apiKey, modelName, targetLanguage)
 }

@@ -25,17 +25,34 @@ type GPTResponse struct {
 	} `json:"choices"`
 }
 
-func GenerateSuggestion(transcript, apiKey string) (string, error) {
+func GenerateSuggestion(transcript, apiKey, targetLanguage string) (string, error) {
 	url := "https://api.openai.com/v1/chat/completions"
+
+	// Map language codes to language names
+	languageMap := map[string]string{
+		"vi": "Tiếng Việt",
+		"en": "Tiếng Anh",
+		"ja": "Tiếng Nhật",
+		"ko": "Tiếng Hàn",
+		"zh": "Tiếng Trung",
+		"fr": "Tiếng Pháp",
+		"de": "Tiếng Đức",
+		"es": "Tiếng Tây Ban Nha",
+	}
+
+	languageName := languageMap[targetLanguage]
+	if languageName == "" {
+		languageName = "Tiếng Việt" // Default fallback
+	}
 
 	prompt := fmt.Sprintf(`Bạn là một chuyên gia content Tiktok. Dựa vào nội dung sau:
 "%s"
 
-Hãy viết (TẤT CẢ BẰNG TIẾNG VIỆT):
-- 3 caption hấp dẫn bằng tiếng Việt, mỗi caption không quá 100 ký tự.
+Hãy viết (TẤT CẢ BẰNG %s):
+- 3 caption hấp dẫn bằng %s, mỗi caption không quá 100 ký tự.
 - 5-10 hashtag liên quan, viết theo định dạng #abc #xyz (hashtag có thể có tiếng Anh)
 
-LƯU Ý: Caption phải bằng tiếng Việt, chỉ hashtag có thể có tiếng Anh.`, transcript)
+LƯU Ý: Caption phải bằng %s, chỉ hashtag có thể có tiếng Anh.`, transcript, languageName, languageName, languageName)
 
 	reqBody := GPTRequest{
 		Model: "gpt-3.5-turbo",
@@ -150,10 +167,10 @@ func GenerateTikTokOptimization(prompt, apiKey string) (string, error) {
 }
 
 // GenerateCaptionWithService wrapper function that uses service_config to determine which service to use
-func GenerateCaptionWithService(transcript, apiKey, serviceName, modelAPIName string) (string, error) {
+func GenerateCaptionWithService(transcript, apiKey, serviceName, modelAPIName, targetLanguage string) (string, error) {
 	// Currently only GPT-3.5-turbo is supported for caption_generation
 	if serviceName == "gpt_3.5_turbo" {
-		return GenerateSuggestion(transcript, apiKey)
+		return GenerateSuggestion(transcript, apiKey, targetLanguage)
 	}
 
 	// For future services, we can add more conditions here
@@ -162,16 +179,33 @@ func GenerateCaptionWithService(transcript, apiKey, serviceName, modelAPIName st
 	return "", fmt.Errorf("unsupported caption generation service: %s", serviceName)
 }
 
-func TranslateSRTWithGPT(srtFilePath, apiKey, modelName string) (string, error) {
+func TranslateSRTWithGPT(srtFilePath, apiKey, modelName, targetLanguage string) (string, error) {
 	// Đọc file SRT
 	srtContent, err := os.ReadFile(srtFilePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read SRT file: %v", err)
 	}
 
+	// Map language codes to language names
+	languageMap := map[string]string{
+		"vi": "Tiếng Việt",
+		"en": "Tiếng Anh",
+		"ja": "Tiếng Nhật",
+		"ko": "Tiếng Hàn",
+		"zh": "Tiếng Trung",
+		"fr": "Tiếng Pháp",
+		"de": "Tiếng Đức",
+		"es": "Tiếng Tây Ban Nha",
+	}
+
+	languageName := languageMap[targetLanguage]
+	if languageName == "" {
+		languageName = "Tiếng Việt" // Default fallback
+	}
+
 	url := "https://api.openai.com/v1/chat/completions"
 
-	prompt := fmt.Sprintf(`Hãy dịch file SRT sang tiếng Việt.
+	prompt := fmt.Sprintf(`Hãy dịch file SRT sang %s.
 
 TUÂN THỦ NGHIÊM NGẶT CÁC QUY TẮC SAU:
 - Giữ nguyên 100%% số thứ tự và dòng thời gian (timestamps)
@@ -182,7 +216,7 @@ TUÂN THỦ NGHIÊM NGẶT CÁC QUY TẮC SAU:
 - Tên nhân vật hãy ưu tiên để dạng hán-việt. ví dụ: Nhị Cẩu, Tiểu Đản, Hồ Nam, Bắc Kinh
 
 Nội dung SRT cần dịch:
-%s`, string(srtContent))
+%s`, languageName, string(srtContent))
 
 	reqBody := GPTRequest{
 		Model: modelName,

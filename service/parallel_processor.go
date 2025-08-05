@@ -184,7 +184,7 @@ func (p *ProcessVideoParallel) ProcessParallel() (*ProcessVideoResult, error) {
 	translationResult, err := p.processTranslation(whisperResult)
 	if err != nil {
 		p.Processor.UpdateTaskProgress("translation", 0, "failed")
-		return nil, fmt.Errorf("translation failed: %v", err)
+		return nil, fmt.Errorf("Lỗi dịch thuật: %v", err)
 	}
 	p.Processor.UpdateTaskProgress("translation", 100, "completed")
 

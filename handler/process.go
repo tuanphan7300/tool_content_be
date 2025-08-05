@@ -323,7 +323,7 @@ func ProcessVideoHandler(c *gin.Context) {
 			return
 		}
 		// Parse SRT file to segments
-		segments, transcript, err = util.ParseSRTFile(customSrtPath)
+		parsedSegments, parsedTranscript, err := util.ParseSRTFile(customSrtPath)
 		if err != nil {
 			if processID > 0 {
 				processService.UpdateProcessStatus(processID, "failed")
@@ -332,6 +332,8 @@ func ProcessVideoHandler(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Không thể đọc file phụ đề .srt"})
 			return
 		}
+		segments = parsedSegments
+		transcript = parsedTranscript
 	} else {
 		// Không có custom SRT, dùng Whisper thông qua service_config
 		whisperServiceName, whisperModelAPIName, err := pricingService.GetActiveServiceForType("speech_to_text")
@@ -1616,7 +1618,13 @@ func ProcessVideoParallelHandler(c *gin.Context) {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
 		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Parallel processing failed: %v", err)})
+
+		// Kiểm tra nếu là lỗi quá tải
+		if strings.Contains(err.Error(), "Hệ thống đang quá tải") {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Hệ thống đang quá tải, vui lòng thử lại sau"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Xử lý video thất bại: %v", err)})
+		}
 		return
 	}
 

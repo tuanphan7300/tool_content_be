@@ -224,7 +224,7 @@ File SRT gốc:
 	// Call Gemini API
 	translatedContent, err := GenerateWithGemini(prompt, apiKey, modelName)
 	if err != nil {
-		return "", fmt.Errorf("failed to translate SRT with Gemini: %v", err)
+		return "", fmt.Errorf("Lỗi dịch thuật: %v", err)
 	}
 
 	// Clean up the response - remove any extra text that might be added by Gemini

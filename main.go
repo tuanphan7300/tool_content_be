@@ -80,24 +80,24 @@ func main() {
 	}()
 
 	// Khởi động cron job kiểm tra đơn hàng hết hạn
-	go func() {
-		ticker := time.NewTicker(1 * time.Minute)
-		defer ticker.Stop()
-
-		paymentService := service.NewPaymentOrderService()
-		for {
-			select {
-			case <-ticker.C:
-				if err := paymentService.CheckExpiredOrders(); err != nil {
-					log.Printf("Failed to check expired orders: %v", err)
-				}
-			}
-		}
-	}()
+	//go func() {
+	//	ticker := time.NewTicker(1 * time.Minute)
+	//	defer ticker.Stop()
+	//
+	//	paymentService := service.NewPaymentOrderService()
+	//	for {
+	//		select {
+	//		case <-ticker.C:
+	//			if err := paymentService.CheckExpiredOrders(); err != nil {
+	//				log.Printf("Failed to check expired orders: %v", err)
+	//			}
+	//		}
+	//	}
+	//}()
 
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"https://inis-hvnh.site", "*"},
+		AllowOrigins:     []string{"https://inis-hvnh.site", "https://videotool.com.vn", "*"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		AllowCredentials: true,

@@ -1406,3 +1406,316 @@ func CreateSubtitleHandler(c *gin.Context) {
 		util.CleanupDir(videoDir)
 	}()
 }
+
+// ProcessVideoParallelHandler xử lý video với parallel processing
+func ProcessVideoParallelHandler(c *gin.Context) {
+	configg := config.InfaConfig{}
+	configg.LoadConfig()
+	apiKey := configg.ApiKey
+	geminiKey := configg.GeminiKey
+
+	// Lấy user_id từ token
+	userID := c.GetUint("user_id")
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Lấy process_id từ middleware
+	processID := c.GetUint("process_id")
+	processService := service.NewProcessStatusService()
+	creditService := service.NewCreditService()
+	pricingService := service.NewPricingService()
+
+	// Đảm bảo cập nhật trạng thái process khi hoàn thành hoặc lỗi
+	defer func() {
+		if processID > 0 {
+			if r := recover(); r != nil {
+				// Có panic, cập nhật trạng thái failed
+				processService.UpdateProcessStatus(processID, "failed")
+				panic(r) // Re-panic để gin có thể xử lý
+			}
+		}
+	}()
+
+	// Get target language parameter (default to Vietnamese if not provided)
+	targetLanguage := c.PostForm("target_language")
+	if targetLanguage == "" {
+		targetLanguage = "vi" // Default to Vietnamese
+	}
+
+	// Get subtitle color parameters
+	subtitleColor := c.PostForm("subtitle_color")
+	if subtitleColor == "" {
+		subtitleColor = "#FFFFFF" // Default to white
+	}
+	subtitleBgColor := c.PostForm("subtitle_bgcolor")
+	if subtitleBgColor == "" {
+		subtitleBgColor = "#808080" // Default to gray
+	}
+
+	// Get the uploaded file
+	file, err := c.FormFile("file")
+	if err != nil {
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
+		return
+	}
+
+	// Kiểm tra kích thước file không quá 100MB
+	if file.Size > 100*1024*1024 {
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileTooLarge, nil)
+		return
+	}
+
+	// Tạo thư mục riêng cho video
+	timestamp := time.Now().UnixNano()
+	baseName := strings.TrimSuffix(filepath.Base(file.Filename), filepath.Ext(file.Filename))
+	uniqueName := fmt.Sprintf("%d_%s%s", timestamp, baseName, filepath.Ext(file.Filename))
+	videoDir := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName)))
+	if err := os.MkdirAll(videoDir, 0755); err != nil {
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to create video directory",
+		})
+		return
+	}
+
+	// Lưu video vào thư mục riêng
+	videoPath := filepath.Join(videoDir, uniqueName)
+	if err := c.SaveUploadedFile(file, videoPath); err != nil {
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to save video file",
+		})
+		return
+	}
+
+	// Tách audio từ video
+	audioPath, err := util.ProcessfileToDir(c, file, videoDir)
+	if err != nil {
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process file"})
+		return
+	}
+
+	// Kiểm tra duration < 7 phút
+	duration, _ := util.GetAudioDuration(audioPath)
+	if duration > 420 {
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 7 phút."})
+		return
+	}
+
+	// Check for custom SRT file
+	customSrtFile, err := c.FormFile("custom_srt")
+	var hasCustomSrt bool = false
+	var customSrtPath string
+
+	if err == nil && customSrtFile != nil {
+		hasCustomSrt = true
+		customSrtPath = filepath.Join(videoDir, "custom.srt")
+		if err := c.SaveUploadedFile(customSrtFile, customSrtPath); err != nil {
+			if processID > 0 {
+				processService.UpdateProcessStatus(processID, "failed")
+			}
+			util.CleanupDir(videoDir)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save custom SRT file"})
+			return
+		}
+	}
+
+	// Lấy các tham số tuỳ chỉnh từ form-data
+	backgroundVolume := 1.2
+	ttsVolume := 1.5
+	speakingRate := 1.2
+
+	if v := c.PostForm("background_volume"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			backgroundVolume = f
+		}
+	}
+	if v := c.PostForm("tts_volume"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			ttsVolume = f
+		}
+	}
+	if v := c.PostForm("speaking_rate"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			speakingRate = f
+		}
+	}
+
+	// Tính chi phí ước tính
+	durationMinutes := duration / 60.0
+	estimatedCostWithMarkup, err := pricingService.EstimateProcessVideoCostWithMarkup(durationMinutes, 1000, 1000, userID) // Ước tính
+	if err != nil {
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to estimate cost"})
+		return
+	}
+
+	estimatedCost := estimatedCostWithMarkup["total"]
+
+	// Lock credit trước khi xử lý
+	_, err = creditService.LockCredits(userID, estimatedCost, "process-video", "Lock credit for parallel video processing", nil)
+	if err != nil {
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"error":   "Không đủ credit để xử lý video",
+			"warning": "Số dư tài khoản của bạn không đủ để sử dụng dịch vụ này. Vui lòng nạp thêm credit để tiếp tục sử dụng!",
+		})
+		return
+	}
+
+	// Đảm bảo unlock credit nếu có lỗi
+	defer func() {
+		if r := recover(); r != nil {
+			creditService.UnlockCredits(userID, estimatedCost, "process-video", "Unlock due to panic", nil)
+			panic(r)
+		}
+	}()
+
+	// Tạo parallel processor
+	parallelProcessor := service.NewProcessVideoParallel(videoPath, audioPath, videoDir, targetLanguage, apiKey, geminiKey)
+	parallelProcessor.HasCustomSrt = hasCustomSrt
+	parallelProcessor.CustomSrtPath = customSrtPath
+	parallelProcessor.SubtitleColor = subtitleColor
+	parallelProcessor.SubtitleBgColor = subtitleBgColor
+	parallelProcessor.BackgroundVolume = backgroundVolume
+	parallelProcessor.TTSVolume = ttsVolume
+	parallelProcessor.SpeakingRate = speakingRate
+
+	// Xử lý song song
+	result, err := parallelProcessor.ProcessParallel()
+	if err != nil {
+		creditService.UnlockCredits(userID, estimatedCost, "process-video", "Unlock due to processing error", nil)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Parallel processing failed: %v", err)})
+		return
+	}
+
+	// Save to database
+	segmentsJSON, _ := json.Marshal(result.Segments)
+	captionHistory := config.CaptionHistory{
+		UserID:              userID,
+		VideoFilename:       videoPath,
+		VideoFilenameOrigin: file.Filename,
+		Transcript:          result.Transcript,
+		Segments:            segmentsJSON,
+		SegmentsVi:          segmentsJSON, // Sử dụng segments gốc cho segments_vi
+		ProcessType:         "process-video",
+		SrtFile:             result.TranslatedSRTPath,
+		OriginalSrtFile:     result.OriginalSRTPath,
+		TTSFile:             result.TTSPath,
+		MergedVideoFile:     result.FinalVideoPath,
+		BackgroundMusic:     result.BackgroundPath,
+		CreatedAt:           time.Now(),
+	}
+
+	if err := config.Db.Create(&captionHistory).Error; err != nil {
+		creditService.UnlockCredits(userID, estimatedCost, "process-video", "Unlock due to database error", nil)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save to database"})
+		return
+	}
+
+	// Trừ credit theo chi phí thực tế (có thể tính toán lại dựa trên kết quả)
+	actualCost := estimatedCost * 0.8 // Giả sử chi phí thực tế thấp hơn do tối ưu
+	if err := creditService.DeductCredits(userID, actualCost, "process-video", "Parallel video processing", &captionHistory.ID, "per_minute", durationMinutes); err != nil {
+		creditService.UnlockCredits(userID, estimatedCost-actualCost, "process-video", "Unlock remaining credits due to deduction error", nil)
+		if processID > 0 {
+			processService.UpdateProcessStatus(processID, "failed")
+		}
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"error":   "Không đủ credit cho processing",
+			"warning": "Số dư tài khoản của bạn không đủ để sử dụng dịch vụ này. Vui lòng nạp thêm credit để tiếp tục sử dụng!",
+		})
+		return
+	}
+
+	// Cập nhật trạng thái process thành completed
+	if processID > 0 {
+		processService.UpdateProcessStatus(processID, "completed")
+		processService.UpdateProcessVideoID(processID, captionHistory.ID)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":                 "Video processed successfully with parallel processing",
+		"background_music":        result.BackgroundPath,
+		"srt_file":                result.TranslatedSRTPath,
+		"original_srt_file":       result.OriginalSRTPath,
+		"tts_file":                result.TTSPath,
+		"merged_video":            result.FinalVideoPath,
+		"transcript":              result.Transcript,
+		"segments":                result.Segments,
+		"segments_vi":             result.Segments,
+		"id":                      captionHistory.ID,
+		"process_id":              processID,
+		"processing_time":         result.ProcessingTime.String(),
+		"performance_improvement": "Parallel processing completed",
+	})
+}
+
+// GetProcessingProgressHandler lấy tiến độ xử lý
+func GetProcessingProgressHandler(c *gin.Context) {
+	processIDStr := c.Param("process_id")
+	if processIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Process ID is required"})
+		return
+	}
+
+	// Convert string to uint
+	processID, err := strconv.ParseUint(processIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid process ID format"})
+		return
+	}
+
+	// Lấy thông tin process từ database
+	var processStatus config.UserProcessStatus
+	err = config.Db.Where("id = ?", uint(processID)).First(&processStatus).Error
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Process not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"process_id":   processID,
+		"status":       processStatus.Status,
+		"process_type": processStatus.ProcessType,
+		"started_at":   processStatus.StartedAt,
+		"completed_at": processStatus.CompletedAt,
+		"created_at":   processStatus.CreatedAt,
+		"updated_at":   processStatus.UpdatedAt,
+	})
+}

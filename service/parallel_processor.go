@@ -101,6 +101,7 @@ type ProcessVideoParallel struct {
 	APIKey           string
 	GeminiKey        string
 	CacheService     *CacheService
+	PricingService   *PricingService // Thêm PricingService
 }
 
 // NewProcessVideoParallel tạo processor mới
@@ -119,6 +120,7 @@ func NewProcessVideoParallel(videoPath, audioPath, videoDir, targetLanguage, api
 		APIKey:           apiKey,
 		GeminiKey:        geminiKey,
 		CacheService:     NewCacheService(),
+		PricingService:   NewPricingService(), // Khởi tạo PricingService
 	}
 }
 
@@ -277,9 +279,14 @@ func (p *ProcessVideoParallel) processWhisper() (*WhisperResult, error) {
 			return cachedResult, nil
 		}
 
-		// Sử dụng Whisper
-		var err error
-		transcript, segments, _, err = TranscribeWhisperOpenAI(p.AudioPath, p.APIKey)
+		// Lấy service được bật cho speech-to-text
+		whisperServiceName, whisperModelAPIName, err := p.PricingService.GetActiveServiceForType("speech_to_text")
+		if err != nil {
+			return nil, fmt.Errorf("failed to get active speech-to-text service: %v", err)
+		}
+
+		// Sử dụng service được cấu hình
+		transcript, segments, _, err = TranscribeWithService(p.AudioPath, p.APIKey, whisperServiceName, whisperModelAPIName)
 		if err != nil {
 			return nil, err
 		}
@@ -343,8 +350,21 @@ func (p *ProcessVideoParallel) processTranslation(whisperResult *WhisperResult) 
 		}, nil
 	}
 
-	// Dịch SRT
-	translatedContent, err := TranslateSRTFile(whisperResult.SRTPath, p.GeminiKey)
+	// Lấy service được bật cho translation
+	serviceName, srtModelAPIName, err := p.PricingService.GetActiveServiceForType("srt_translation")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active SRT translation service: %v", err)
+	}
+
+	// Dịch SRT theo service được cấu hình
+	var translatedContent string
+	if strings.Contains(serviceName, "gpt") {
+		// Sử dụng GPT cho translation
+		translatedContent, err = TranslateSRTFileWithGPT(whisperResult.SRTPath, p.APIKey, srtModelAPIName, p.TargetLanguage)
+	} else {
+		// Sử dụng Gemini cho translation (default)
+		translatedContent, err = TranslateSRTFileWithModelAndLanguage(whisperResult.SRTPath, p.GeminiKey, srtModelAPIName, p.TargetLanguage)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -376,8 +396,14 @@ func (p *ProcessVideoParallel) processTTS(translationResult *TranslationResult) 
 		content = string(contentBytes)
 	}
 
-	// Chuyển thành speech
-	ttsPath, err := ConvertSRTToSpeechWithLanguage(content, p.VideoDir, p.SpeakingRate, p.TargetLanguage)
+	// Lấy service được bật cho TTS
+	ttsServiceName, ttsModelAPIName, err := p.PricingService.GetActiveServiceForType("text_to_speech")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active text-to-speech service: %v", err)
+	}
+
+	// Chuyển thành speech theo service được cấu hình
+	ttsPath, err := ConvertSRTToSpeechWithService(content, p.VideoDir, p.SpeakingRate, p.TargetLanguage, ttsServiceName, ttsModelAPIName)
 	if err != nil {
 		return nil, err
 	}

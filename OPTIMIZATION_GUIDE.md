@@ -155,6 +155,7 @@ curl -X DELETE http://localhost:8080/cache/all \
 ### 1. **Tương thích**
 - API cũ `/process-video` vẫn hoạt động bình thường
 - API mới `/process-video-parallel` cho hiệu suất tốt hơn
+- **✅ Đã sửa**: API `/process-video-parallel` giờ đã sử dụng dịch vụ được bật từ database giống như API `process-video`
 
 ### 2. **Tài nguyên**
 - Parallel processing sử dụng nhiều CPU hơn

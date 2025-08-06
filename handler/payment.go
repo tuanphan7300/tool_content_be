@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -322,14 +323,21 @@ func SepayWebhookHandler(c *gin.Context) {
 
 	// Lấy order code từ content hoặc code
 	if content, ok := webhookData["content"].(string); ok {
+		log.Printf("Processing content: %s", content)
 		// Tìm order code trong content (format: PAY202508020808253439)
 		if strings.Contains(content, "PAY") {
-			parts := strings.Split(content, ".")
-			for _, part := range parts {
-				if strings.HasPrefix(part, "PAY") {
-					orderCode = part
-					break
+			// Tìm vị trí bắt đầu của PAY
+			payIndex := strings.Index(content, "PAY")
+			if payIndex != -1 {
+				// Lấy từ PAY đến khoảng trắng đầu tiên hoặc hết chuỗi
+				remainingContent := content[payIndex:]
+				spaceIndex := strings.Index(remainingContent, " ")
+				if spaceIndex != -1 {
+					orderCode = remainingContent[:spaceIndex]
+				} else {
+					orderCode = remainingContent
 				}
+				log.Printf("Extracted order code: %s", orderCode)
 			}
 		}
 	}
@@ -338,6 +346,38 @@ func SepayWebhookHandler(c *gin.Context) {
 	if orderCode == "" {
 		if code, ok := webhookData["code"].(string); ok && code != "" {
 			orderCode = code
+			log.Printf("Using order code from code field: %s", orderCode)
+		}
+	}
+
+	// Fallback: Tìm order code bằng regex pattern PAY + 16 digits
+	if orderCode == "" {
+		if content, ok := webhookData["content"].(string); ok {
+			// Tìm pattern PAY + 16 digits
+			re := regexp.MustCompile(`PAY\d{16}`)
+			matches := re.FindString(content)
+			if matches != "" {
+				orderCode = matches
+				log.Printf("Extracted order code using regex: %s", orderCode)
+			}
+		}
+	}
+
+	// Validation: Kiểm tra order code có đúng format không
+	if orderCode != "" {
+		// Kiểm tra format PAY + 16 digits
+		re := regexp.MustCompile(`^PAY\d{16}$`)
+		if !re.MatchString(orderCode) {
+			log.Printf("Invalid order code format: %s, trying to extract valid format", orderCode)
+			// Thử extract lại bằng regex
+			if content, ok := webhookData["content"].(string); ok {
+				re := regexp.MustCompile(`PAY\d{16}`)
+				matches := re.FindString(content)
+				if matches != "" {
+					orderCode = matches
+					log.Printf("Re-extracted valid order code: %s", orderCode)
+				}
+			}
 		}
 	}
 

@@ -239,6 +239,15 @@ func isOnlyNumbersOrTimestamps(text string) bool {
 }
 
 // getVoiceForLanguage maps language codes to Google TTS voice settings
+// This function ensures that the appropriate voice is used for each target language
+// Vietnamese: vi-VN-Wavenet-C (female voice, natural for Vietnamese)
+// English: en-US-Wavenet-F (female voice, natural for English)
+// Japanese: ja-JP-Wavenet-A (female voice, natural for Japanese)
+// Korean: ko-KR-Wavenet-A (female voice, natural for Korean)
+// Chinese: cmn-CN-Wavenet-A (female voice, natural for Chinese)
+// French: fr-FR-Wavenet-A (female voice, natural for French)
+// German: de-DE-Wavenet-A (female voice, natural for German)
+// Spanish: es-ES-Wavenet-A (female voice, natural for Spanish)
 func getVoiceForLanguage(languageCode string) (string, string) {
 	voiceMap := map[string]struct {
 		LanguageCode string
@@ -779,7 +788,7 @@ type BatchTTSRequest struct {
 }
 
 // processBatchTTS processes multiple text segments in a single API call when possible
-func processBatchTTS(client *texttospeech.Client, ctx context.Context, entries []SRTEntry, tempDir string, speakingRate float64) ([]string, error) {
+func processBatchTTS(client *texttospeech.Client, ctx context.Context, entries []SRTEntry, tempDir string, speakingRate float64, targetLanguage string) ([]string, error) {
 	var segmentFiles []string
 
 	// Group entries into batches (max 10 segments per batch to avoid API limits)
@@ -802,14 +811,17 @@ func processBatchTTS(client *texttospeech.Client, ctx context.Context, entries [
 			combinedText += entry.Text
 		}
 
+		// Get voice settings for target language
+		languageCode, voiceName := getVoiceForLanguage(targetLanguage)
+
 		// Single API call for the entire batch
 		req := texttospeechpb.SynthesizeSpeechRequest{
 			Input: &texttospeechpb.SynthesisInput{
 				InputSource: &texttospeechpb.SynthesisInput_Text{Text: combinedText},
 			},
 			Voice: &texttospeechpb.VoiceSelectionParams{
-				LanguageCode: "vi-VN",
-				Name:         "vi-VN-Wavenet-C",
+				LanguageCode: languageCode,
+				Name:         voiceName,
 			},
 			AudioConfig: &texttospeechpb.AudioConfig{
 				AudioEncoding:   texttospeechpb.AudioEncoding_MP3,
@@ -853,7 +865,7 @@ func processBatchTTS(client *texttospeech.Client, ctx context.Context, entries [
 }
 
 // processIndividualTTS processes each text segment individually (optimized version)
-func processIndividualTTS(client *texttospeech.Client, ctx context.Context, entries []SRTEntry, tempDir string, speakingRate float64) ([]string, error) {
+func processIndividualTTS(client *texttospeech.Client, ctx context.Context, entries []SRTEntry, tempDir string, speakingRate float64, targetLanguage string) ([]string, error) {
 	var segmentFiles []string
 
 	// Group consecutive short segments to reduce API calls
@@ -901,14 +913,17 @@ func processIndividualTTS(client *texttospeech.Client, ctx context.Context, entr
 	for i, entry := range groupedEntries {
 		log.Printf("Processing segment %d/%d: %.2f - %.2f", i+1, len(groupedEntries), entry.Start, entry.End)
 
+		// Get voice settings for target language
+		languageCode, voiceName := getVoiceForLanguage(targetLanguage)
+
 		// Convert text to speech
 		req := texttospeechpb.SynthesizeSpeechRequest{
 			Input: &texttospeechpb.SynthesisInput{
 				InputSource: &texttospeechpb.SynthesisInput_Text{Text: entry.Text},
 			},
 			Voice: &texttospeechpb.VoiceSelectionParams{
-				LanguageCode: "vi-VN",
-				Name:         "vi-VN-Wavenet-C",
+				LanguageCode: languageCode,
+				Name:         voiceName,
 			},
 			AudioConfig: &texttospeechpb.AudioConfig{
 				AudioEncoding:   texttospeechpb.AudioEncoding_MP3,

@@ -101,7 +101,7 @@ type ProcessVideoParallel struct {
 	APIKey           string
 	GeminiKey        string
 	CacheService     *CacheService
-	PricingService   *PricingService // Thêm PricingService
+	PricingService   *PricingService
 }
 
 // NewProcessVideoParallel tạo processor mới
@@ -120,7 +120,7 @@ func NewProcessVideoParallel(videoPath, audioPath, videoDir, targetLanguage, api
 		APIKey:           apiKey,
 		GeminiKey:        geminiKey,
 		CacheService:     NewCacheService(),
-		PricingService:   NewPricingService(), // Khởi tạo PricingService
+		PricingService:   NewPricingService(),
 	}
 }
 
@@ -264,14 +264,20 @@ func (p *ProcessVideoParallel) processWhisper() (*WhisperResult, error) {
 	var segments []Segment
 
 	if p.HasCustomSrt {
-		// Sử dụng custom SRT - đơn giản hóa, chỉ đọc file
-		content, err := os.ReadFile(p.CustomSrtPath)
+		// Sử dụng custom SRT - parse file SRT để lấy segments và transcript
+		// Parse SRT file để lấy segments
+		parsedSegments, err := ParseSRTToSegments(p.CustomSrtPath)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to parse custom SRT file: %v", err)
 		}
-		transcript = string(content)
-		// Tạo segments đơn giản
-		segments = []Segment{{Start: 0, End: 0, Text: transcript}}
+
+		// Tạo transcript từ segments
+		var transcriptLines []string
+		for _, segment := range parsedSegments {
+			transcriptLines = append(transcriptLines, segment.Text)
+		}
+		transcript = strings.Join(transcriptLines, " ")
+		segments = parsedSegments
 	} else {
 		// Kiểm tra cache trước
 		if cachedResult, err := p.CacheService.GetCachedWhisperResult(p.AudioPath); err == nil {
@@ -279,14 +285,9 @@ func (p *ProcessVideoParallel) processWhisper() (*WhisperResult, error) {
 			return cachedResult, nil
 		}
 
-		// Lấy service được bật cho speech-to-text
-		whisperServiceName, whisperModelAPIName, err := p.PricingService.GetActiveServiceForType("speech_to_text")
-		if err != nil {
-			return nil, fmt.Errorf("failed to get active speech-to-text service: %v", err)
-		}
-
-		// Sử dụng service được cấu hình
-		transcript, segments, _, err = TranscribeWithService(p.AudioPath, p.APIKey, whisperServiceName, whisperModelAPIName)
+		// Sử dụng Whisper
+		var err error
+		transcript, segments, _, err = TranscribeWhisperOpenAI(p.AudioPath, p.APIKey)
 		if err != nil {
 			return nil, err
 		}
@@ -350,20 +351,20 @@ func (p *ProcessVideoParallel) processTranslation(whisperResult *WhisperResult) 
 		}, nil
 	}
 
-	// Lấy service được bật cho translation
+	// Lấy service_name và model_api_name cho nghiệp vụ dịch SRT từ bảng service_config
 	serviceName, srtModelAPIName, err := p.PricingService.GetActiveServiceForType("srt_translation")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active SRT translation service: %v", err)
 	}
 
-	// Dịch SRT theo service được cấu hình
+	// Dịch SRT
 	var translatedContent string
 	if strings.Contains(serviceName, "gpt") {
-		// Sử dụng GPT cho translation
+		// Use GPT for translation
 		translatedContent, err = TranslateSRTFileWithGPT(whisperResult.SRTPath, p.APIKey, srtModelAPIName, p.TargetLanguage)
 	} else {
-		// Sử dụng Gemini cho translation (default)
-		translatedContent, err = TranslateSRTFileWithModelAndLanguage(whisperResult.SRTPath, p.GeminiKey, srtModelAPIName, p.TargetLanguage)
+		// Use Gemini for translation (default)
+		translatedContent, err = TranslateSRTFile(whisperResult.SRTPath, p.GeminiKey, p.TargetLanguage, srtModelAPIName)
 	}
 	if err != nil {
 		return nil, err
@@ -396,14 +397,21 @@ func (p *ProcessVideoParallel) processTTS(translationResult *TranslationResult) 
 		content = string(contentBytes)
 	}
 
-	// Lấy service được bật cho TTS
-	ttsServiceName, ttsModelAPIName, err := p.PricingService.GetActiveServiceForType("text_to_speech")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get active text-to-speech service: %v", err)
+	// Xác định ngôn ngữ cho TTS
+	var ttsLanguage string
+	if p.HasCustomSrt {
+		// Nếu user upload SRT custom, detect ngôn ngữ từ nội dung SRT
+		ttsLanguage = DetectSRTLanguage(content)
+		log.Printf("Using detected language for TTS: %s (from custom SRT)", ttsLanguage)
+		log.Printf("Note: targetLanguage parameter is ignored when custom SRT is provided. Using detected language: %s", ttsLanguage)
+	} else {
+		// Nếu không có SRT custom, sử dụng targetLanguage
+		ttsLanguage = p.TargetLanguage
+		log.Printf("Using target language for TTS: %s", ttsLanguage)
 	}
 
-	// Chuyển thành speech theo service được cấu hình
-	ttsPath, err := ConvertSRTToSpeechWithService(content, p.VideoDir, p.SpeakingRate, p.TargetLanguage, ttsServiceName, ttsModelAPIName)
+	// Chuyển thành speech
+	ttsPath, err := ConvertSRTToSpeechWithLanguage(content, p.VideoDir, p.SpeakingRate, ttsLanguage)
 	if err != nil {
 		return nil, err
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"io"
 	"net/http"
 	"strings"
@@ -100,7 +101,7 @@ func CountTokens(prompt, apiKey, modelName string) (int, error) {
 
 // GenerateWithGemini gửi text tới Gemini API và nhận phản hồi (ví dụ: caption, dịch, hoặc phân tích)
 func GenerateWithGemini(prompt, apiKey, modelName string) (string, error) {
-	// Endpoint của Gemini API (Google AI API)
+	log.Infof("dịch bởi model gemini: %s", modelName)
 	url := "https://generativelanguage.googleapis.com/v1beta/models/" + modelName + ":generateContent"
 
 	// Tạo payload cho request

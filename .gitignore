@@ -24,8 +24,10 @@
 *.mov
 *.mkv
 
-# Pretrained models (large files)
-/pretrained_models/
+# Pretrained models - chỉ ignore file macOS-specific, giữ lại model files
+/pretrained_models/**/._*
+/pretrained_models/**/.DS_Store
+/pretrained_models/**/.probe
 
 # IDE files
 .idea/

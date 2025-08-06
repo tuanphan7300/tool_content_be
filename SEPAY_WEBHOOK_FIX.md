@@ -33,20 +33,19 @@ if strings.Contains(content, "PAY") {
 
 ### **2. Thêm fallback với regex:**
 ```go
-// Fallback: Tìm pattern PAY + 16 digits
-re := regexp.MustCompile(`PAY\d{16}`)
+// Fallback: Tìm pattern PAY + 18 digits (tổng 21 ký tự)
+re := regexp.MustCompile(`PAY\d{18}`)
 matches := re.FindString(content)
 if matches != "" {
     orderCode = matches
 }
 ```
 
-### **3. Thêm validation:**
+### **3. Thêm logging:**
 ```go
-// Kiểm tra format order code
-re := regexp.MustCompile(`^PAY\d{16}$`)
-if !re.MatchString(orderCode) {
-    // Re-extract bằng regex nếu format không đúng
+// Log order code đã extract
+if orderCode != "" {
+    log.Printf("Final order code: %s", orderCode)
 }
 ```
 
@@ -58,6 +57,8 @@ if !re.MatchString(orderCode) {
 | `"PAY202508060354408366 chuyen tien"` | `PAY202508060354408366` | ✅ | ✅ | ✅ |
 | `"chuyen tien PAY202508060354408366"` | `PAY202508060354408366` | ❌ | ✅ | ✅ |
 | `"PAY202508060354408366"` | `PAY202508060354408366` | ✅ | ✅ | ✅ |
+
+**Lưu ý**: Order code có format `PAY` + 18 digits = 21 ký tự tổng cộng
 
 ## 🔧 **Các thay đổi đã thực hiện:**
 
@@ -104,7 +105,7 @@ curl -X POST http://your-domain/v1/webhook/sepay \
 - `"Processing content: ..."`
 - `"Extracted order code: ..."`
 - `"Extracted order code using regex: ..."`
-- `"Re-extracted valid order code: ..."`
+- `"Final order code: ..."`
 
 ### **Database:**
 - Bảng `sepay_webhook_logs` - theo dõi processing_status

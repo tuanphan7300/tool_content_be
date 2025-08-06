@@ -145,7 +145,13 @@ func GenerateWithGemini(prompt, apiKey, modelName string) (string, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		fmt.Printf("[Gemini API ERROR] Status: %d, Body: %s\n", resp.StatusCode, string(body))
-		return "", fmt.Errorf("Gemini API error: %s", string(body))
+
+		// Kiểm tra nếu là lỗi quá tải
+		if strings.Contains(string(body), "overloaded") || strings.Contains(string(body), "UNAVAILABLE") || resp.StatusCode == 503 {
+			return "", fmt.Errorf("Hệ thống đang quá tải, vui lòng thử lại sau")
+		}
+
+		return "", fmt.Errorf("Lỗi dịch thuật, vui lòng thử lại sau")
 	}
 
 	// Parse phản hồi

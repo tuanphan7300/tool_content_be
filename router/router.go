@@ -44,6 +44,16 @@ func SetupRoutes(r *gin.Engine) {
 		protected.POST("/process-voice", handler.ProcessVoiceHandler)
 		protected.POST("/process-background", handler.ProcessBackgroundMusicHandler)
 		protected.POST("/process-video", middleware.FileValidationMiddleware(), middleware.ProcessAnyStatusMiddleware(), middleware.ProcessStatusMiddleware("process-video"), handler.ProcessVideoHandler)
+		protected.POST("/process-video-parallel", middleware.FileValidationMiddleware(), middleware.ProcessAnyStatusMiddleware(), middleware.ProcessStatusMiddleware("process-video"), handler.ProcessVideoParallelHandler)
+		protected.GET("/process/:process_id/progress", handler.GetProcessingProgressHandler)
+
+		// Cache management endpoints
+		protected.GET("/cache/stats", handler.GetCacheStatsHandler)
+		protected.POST("/cache/cleanup", handler.CleanupCacheHandler)
+		protected.DELETE("/cache/entry/:key", handler.DeleteCacheEntryHandler)
+		protected.GET("/cache/entry/:key", handler.GetCacheEntryHandler)
+		protected.DELETE("/cache/all", handler.ClearAllCacheHandler)
+		protected.PUT("/cache/entry/:key/ttl", handler.SetCacheTTLHandler)
 		protected.POST("/text-to-speech", handler.TextToSpeechHandler)
 		protected.POST("/burn-sub", middleware.FileValidationMiddleware(), middleware.ProcessAnyStatusMiddleware(), middleware.ProcessStatusMiddleware("burn-sub"), handler.BurnSubHandler)
 		protected.POST("/create-subtitle", middleware.FileValidationMiddleware(), middleware.ProcessAnyStatusMiddleware(), middleware.ProcessStatusMiddleware("create-subtitle"), handler.CreateSubtitleHandler)

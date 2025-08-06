@@ -854,12 +854,6 @@ func TikTokOptimizerHandler(c *gin.Context) {
 		return
 	}
 
-	// Kiểm tra kích thước file không quá 100MB
-	if file.Size > 100*1024*1024 {
-		util.HandleError(c, http.StatusBadRequest, util.ErrFileTooLarge, nil)
-		return
-	}
-
 	// Tạo thư mục tạm để kiểm tra duration
 	timestamp := time.Now().UnixNano()
 	baseName := strings.TrimSuffix(filepath.Base(file.Filename), filepath.Ext(file.Filename))
@@ -888,11 +882,6 @@ func TikTokOptimizerHandler(c *gin.Context) {
 
 	// Kiểm tra duration < 7 phút
 	duration, _ := util.GetAudioDuration(tempAudioPath)
-	if duration > 420 {
-		util.CleanupDir(tempDir)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 7 phút."})
-		return
-	}
 
 	// Nếu pass tất cả kiểm tra, tiếp tục xử lý
 	configg := config.InfaConfig{}
@@ -909,15 +898,6 @@ func TikTokOptimizerHandler(c *gin.Context) {
 
 	creditService := service.NewCreditService()
 	pricingService := service.NewPricingService()
-
-	// Kiểm tra trạng thái process TikTok Optimizer đang chạy
-	var existingProcess config.UserProcessStatus
-	err = config.Db.Where("user_id = ? AND process_type = ? AND status = ?", userID, "tiktok-optimize", "processing").First(&existingProcess).Error
-	if err == nil {
-		util.CleanupDir(tempDir)
-		c.JSON(http.StatusConflict, gin.H{"error": "Bạn đang có một quá trình TikTok Optimizer đang chạy. Vui lòng chờ hoàn thành trước khi upload mới."})
-		return
-	}
 
 	// Tạo trạng thái process TikTok Optimizer (processing)
 	processStatus := config.UserProcessStatus{
@@ -944,15 +924,10 @@ func TikTokOptimizerHandler(c *gin.Context) {
 	videoPath := tempVideoPath
 	audioPath := tempAudioPath
 
-	// Get target language parameter (default to Vietnamese if not provided)
-	targetLanguage := c.PostForm("target_language")
-	if targetLanguage == "" {
-		targetLanguage = "vi" // Default to Vietnamese
-	}
-
 	// Lấy thông tin bổ sung
 	currentCaption := c.PostForm("current_caption")
 	targetAudience := c.PostForm("target_audience")
+	targetLanguage := c.PostForm("target_language")
 	if targetAudience == "" {
 		targetAudience = "general"
 	}
@@ -975,8 +950,6 @@ func TikTokOptimizerHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Whisper error"})
 		return
 	}
-
-	// Language mapping for analysis
 
 	// --- TÍNH PHÍ CHO TIKTOK OPTIMIZATION ---
 	// Ước tính cost dựa trên độ phức tạp của analysis
@@ -1002,8 +975,41 @@ func TikTokOptimizerHandler(c *gin.Context) {
 		}
 	}()
 
-	// --- SỬ DỤNG SERVICE HYBRID MỚI CHO TIKTOK OPTIMIZATION ---
-	analysisResult, err := service.GenerateAdvancedTikTokOptimization(transcript, currentCaption, targetAudience, targetLanguage, duration)
+	// --- SỬ DỤNG TIKTOK SERVICE MANAGER VỚI SERVICE_CONFIG VÀ TÍNH PHÍ ---
+	// Tạo TikTok Service Manager
+	tikTokManager := service.NewTikTokServiceManager(config.Db)
+
+	// Analyze content category
+	contentCategory := service.AnalyzeContentCategory(transcript, currentCaption)
+
+	// Generate optimized content với service config
+	localizedContent, err := tikTokManager.GenerateOptimizedContentWithConfig(transcript, contentCategory, targetLanguage, duration, apiKey)
+	if err != nil {
+		creditService.UnlockCredits(userID, totalCost, "tiktok-optimize", "Unlock due to analysis error", nil)
+		config.Db.Model(processStatus).Update("status", "failed")
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Analysis error: " + err.Error()})
+		return
+	}
+
+	// Convert localized content to analysis result
+	analysisResult := &service.TikTokAnalysisResult{
+		HookScore:         service.CalculateHookScore(transcript, duration, contentCategory),
+		ViralPotential:    service.CalculateViralPotential(transcript, duration, contentCategory, targetAudience),
+		OptimizationTips:  localizedContent.OptimizationTips,
+		TrendingHashtags:  localizedContent.TrendingHashtags,
+		SuggestedCaption:  localizedContent.SuggestedCaption,
+		BestPostingTime:   service.GetBestPostingTime(targetAudience, contentCategory),
+		EngagementPrompts: localizedContent.EngagementPrompts,
+		CallToAction:      localizedContent.CallToAction,
+		ContentCategory:   contentCategory,
+		TargetAudience:    targetAudience,
+		TrendingTopics:    localizedContent.TrendingTopics,
+		VideoPacing:       service.AnalyzeVideoPacing(duration, contentCategory),
+		ThumbnailTips:     service.GenerateThumbnailTips(contentCategory, targetAudience, targetLanguage),
+		SoundSuggestions:  service.GenerateSoundSuggestions(contentCategory, targetAudience, targetLanguage),
+		AnalysisMethod:    "ai-enhanced",
+	}
 	if err != nil {
 		creditService.UnlockCredits(userID, totalCost, "tiktok-optimize", "Unlock due to analysis error", nil)
 		config.Db.Model(processStatus).Update("status", "failed")
@@ -1442,9 +1448,6 @@ func ProcessVideoParallelHandler(c *gin.Context) {
 
 	// Get target language parameter (default to Vietnamese if not provided)
 	targetLanguage := c.PostForm("target_language")
-	if targetLanguage == "" {
-		targetLanguage = "vi" // Default to Vietnamese
-	}
 
 	// Get subtitle color parameters
 	subtitleColor := c.PostForm("subtitle_color")
@@ -1463,15 +1466,6 @@ func ProcessVideoParallelHandler(c *gin.Context) {
 			processService.UpdateProcessStatus(processID, "failed")
 		}
 		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
-		return
-	}
-
-	// Kiểm tra kích thước file không quá 100MB
-	if file.Size > 100*1024*1024 {
-		if processID > 0 {
-			processService.UpdateProcessStatus(processID, "failed")
-		}
-		util.HandleError(c, http.StatusBadRequest, util.ErrFileTooLarge, nil)
 		return
 	}
 
@@ -1516,14 +1510,6 @@ func ProcessVideoParallelHandler(c *gin.Context) {
 
 	// Kiểm tra duration < 7 phút
 	duration, _ := util.GetAudioDuration(audioPath)
-	if duration > 420 {
-		if processID > 0 {
-			processService.UpdateProcessStatus(processID, "failed")
-		}
-		util.CleanupDir(videoDir)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 7 phút."})
-		return
-	}
 
 	// Check for custom SRT file
 	customSrtFile, err := c.FormFile("custom_srt")

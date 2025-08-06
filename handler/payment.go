@@ -350,11 +350,11 @@ func SepayWebhookHandler(c *gin.Context) {
 		}
 	}
 
-	// Fallback: Tìm order code bằng regex pattern PAY + 16 digits
+	// Fallback: Tìm order code bằng regex pattern PAY + 18 digits (3 PAY + 18 digits = 21 ký tự)
 	if orderCode == "" {
 		if content, ok := webhookData["content"].(string); ok {
-			// Tìm pattern PAY + 16 digits
-			re := regexp.MustCompile(`PAY\d{16}`)
+			// Tìm pattern PAY + 18 digits (tổng 21 ký tự)
+			re := regexp.MustCompile(`PAY\d{18}`)
 			matches := re.FindString(content)
 			if matches != "" {
 				orderCode = matches
@@ -363,22 +363,9 @@ func SepayWebhookHandler(c *gin.Context) {
 		}
 	}
 
-	// Validation: Kiểm tra order code có đúng format không
+	// Log order code đã extract
 	if orderCode != "" {
-		// Kiểm tra format PAY + 16 digits
-		re := regexp.MustCompile(`^PAY\d{16}$`)
-		if !re.MatchString(orderCode) {
-			log.Printf("Invalid order code format: %s, trying to extract valid format", orderCode)
-			// Thử extract lại bằng regex
-			if content, ok := webhookData["content"].(string); ok {
-				re := regexp.MustCompile(`PAY\d{16}`)
-				matches := re.FindString(content)
-				if matches != "" {
-					orderCode = matches
-					log.Printf("Re-extracted valid order code: %s", orderCode)
-				}
-			}
-		}
+		log.Printf("Final order code: %s", orderCode)
 	}
 
 	// Lấy amount

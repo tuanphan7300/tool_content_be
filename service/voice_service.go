@@ -129,7 +129,7 @@ func separateAudio(audioPath string, fileName string, stemType string, videoDir 
 	htdemucsDir := filepath.Join(outputDir, "htdemucs")
 	subDirs, err := os.ReadDir(htdemucsDir)
 	if err != nil || len(subDirs) == 0 {
-		return "", fmt.Errorf("Demucs output folder not found: %v", err)
+		return "", fmt.Errorf("demucs output folder not found: %v", err)
 	}
 	actualSubDir := subDirs[0].Name()
 	stemPath := filepath.Join(htdemucsDir, actualSubDir, stemType+".wav")
@@ -281,12 +281,12 @@ func BurnSubtitleWithBackground(videoPath, srtPath, outputDir string, textColor,
 
 	// Check if SRT file exists
 	if _, err := os.Stat(srtPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("SRT file not found: %s", srtPath)
+		return "", fmt.Errorf("srt file not found: %s", srtPath)
 	}
 
 	// Check if video file exists
 	if _, err := os.Stat(videoPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("Video file not found: %s", videoPath)
+		return "", fmt.Errorf("video file not found: %s", videoPath)
 	}
 
 	// Generate output filename with timestamp
@@ -303,14 +303,39 @@ func BurnSubtitleWithBackground(videoPath, srtPath, outputDir string, textColor,
 		return "", fmt.Errorf("failed to get absolute path for SRT: %v", err)
 	}
 
-	log.Printf("Burning subtitle: video=%s, srt=%s, textColor=%s, bgColor=%s", videoPath, absSrtPath, textColor, bgColor)
+	// Detect language from SRT content
+	srtContentBytes, err := os.ReadFile(absSrtPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read SRT file for language detection: %v", err)
+	}
+	srtContent := string(srtContentBytes)
+	lang := DetectSRTLanguage(srtContent)
+
+	// Map language to font
+	fontMap := map[string]string{
+		"zh": "Noto Sans CJK SC",
+		"ja": "Noto Sans CJK JP",
+		"ko": "Noto Sans CJK KR",
+		"vi": "Arial",
+		"en": "Arial",
+		"fr": "DejaVu Sans",
+		"de": "DejaVu Sans",
+		"es": "DejaVu Sans",
+	}
+	fontName, ok := fontMap[lang]
+	if !ok {
+		fontName = "Arial Unicode MS" // fallback
+	}
+
+	log.Printf("Burning subtitle: video=%s, srt=%s, textColor=%s, bgColor=%s, lang=%s, font=%s", videoPath, absSrtPath, textColor, bgColor, lang, fontName)
 
 	// FFmpeg command to burn subtitle with solid background box
 	// Use absolute path and escape special characters
 	escapedSrtPath := strings.ReplaceAll(absSrtPath, "'", "\\'")
+	forceStyle := fmt.Sprintf("Fontname=%s,Fontsize=24,PrimaryColour=%s,BackColour=%s,Outline=2,Shadow=0,BorderStyle=3", fontName, textColorASS, bgColorASS)
 	cmd := exec.Command("ffmpeg",
 		"-i", videoPath,
-		"-vf", fmt.Sprintf("subtitles='%s':force_style='Fontsize=24,PrimaryColour=%s,BackColour=%s,Outline=2,Shadow=0,BorderStyle=3'", escapedSrtPath, textColorASS, bgColorASS),
+		"-vf", fmt.Sprintf("subtitles='%s':force_style='%s'", escapedSrtPath, forceStyle),
 		"-c:a", "copy", // Copy audio without re-encoding
 		"-y", // Overwrite output file
 		outputPath,
@@ -376,6 +401,48 @@ func BurnSubtitleWithASS(videoPath, srtPath, outputDir string, textColor, bgColo
 	// Clean up temporary ASS file
 	os.Remove(assPath)
 
+	return outputPath, nil
+}
+
+// BurnSubtitleWithBackgroundFont giống BurnSubtitleWithBackground nhưng cho phép truyền fontName tuỳ ý
+func BurnSubtitleWithBackgroundFont(videoPath, srtPath, outputDir string, textColor, bgColor, fontName string) (string, error) {
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create output directory: %v", err)
+	}
+	if _, err := os.Stat(srtPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("srt file not found: %s", srtPath)
+	}
+	if _, err := os.Stat(videoPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("video file not found: %s", videoPath)
+	}
+	timestamp := time.Now().Format("20060102_150405")
+	outputPath := filepath.Join(outputDir, fmt.Sprintf("burned_%s.mp4", timestamp))
+	textColorASS := convertHexToASSColor(textColor)
+	bgColorASS := convertHexToASSColor(bgColor)
+	absSrtPath, err := filepath.Abs(srtPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to get absolute path for SRT: %v", err)
+	}
+	log.Printf("Burning subtitle: video=%s, srt=%s, textColor=%s, bgColor=%s, font=%s", videoPath, absSrtPath, textColor, bgColor, fontName)
+	escapedSrtPath := strings.ReplaceAll(absSrtPath, "'", "\\'")
+	forceStyle := fmt.Sprintf("Fontname=%s,Fontsize=24,PrimaryColour=%s,BackColour=%s,Outline=2,Shadow=0,BorderStyle=3", fontName, textColorASS, bgColorASS)
+	cmd := exec.Command("ffmpeg",
+		"-i", videoPath,
+		"-vf", fmt.Sprintf("subtitles='%s':force_style='%s'", escapedSrtPath, forceStyle),
+		"-c:a", "copy",
+		"-y",
+		outputPath,
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("FFmpeg burn subtitle error: %s", string(output))
+		log.Printf("FFmpeg command: %s", strings.Join(cmd.Args, " "))
+		return "", fmt.Errorf("failed to burn subtitle: %v, output: %s", err, string(output))
+	}
+	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("output file was not created: %s", outputPath)
+	}
+	log.Printf("Successfully burned subtitle to: %s", outputPath)
 	return outputPath, nil
 }
 

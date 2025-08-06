@@ -186,7 +186,7 @@ func (p *ProcessVideoParallel) ProcessParallel() (*ProcessVideoResult, error) {
 	translationResult, err := p.processTranslation(whisperResult)
 	if err != nil {
 		p.Processor.UpdateTaskProgress("translation", 0, "failed")
-		return nil, fmt.Errorf("Lỗi dịch thuật: %v", err)
+		return nil, fmt.Errorf("lỗi dịch thuật: %v", err)
 	}
 	p.Processor.UpdateTaskProgress("translation", 100, "completed")
 
@@ -434,11 +434,33 @@ func (p *ProcessVideoParallel) processVideo(ttsResult *TTSResult, backgroundResu
 	// Burn subtitle
 	finalPath := mergedPath
 	if translationResult.TranslatedSRTPath != "" {
-		burnedPath, err := BurnSubtitleWithBackground(mergedPath, translationResult.TranslatedSRTPath, p.VideoDir, p.SubtitleColor, p.SubtitleBgColor)
+		// Detect language from SRT content
+		srtContentBytes, err := os.ReadFile(translationResult.TranslatedSRTPath)
 		if err != nil {
-			log.Printf("Subtitle burn failed, using merged video: %v", err)
+			log.Printf("Failed to read SRT for language detection: %v", err)
 		} else {
-			finalPath = burnedPath
+			lang := DetectSRTLanguage(string(srtContentBytes))
+			fontMap := map[string]string{
+				"zh": "Noto Sans CJK SC",
+				"ja": "Noto Sans CJK JP",
+				"ko": "Noto Sans CJK KR",
+				"vi": "Arial",
+				"en": "Arial",
+				"fr": "DejaVu Sans",
+				"de": "DejaVu Sans",
+				"es": "DejaVu Sans",
+			}
+			fontName, ok := fontMap[lang]
+			if !ok {
+				fontName = "Arial Unicode MS" // fallback
+			}
+			// Gọi BurnSubtitleWithBackground với fontName custom
+			burnedPath, err := BurnSubtitleWithBackgroundFont(mergedPath, translationResult.TranslatedSRTPath, p.VideoDir, p.SubtitleColor, p.SubtitleBgColor, fontName)
+			if err != nil {
+				log.Printf("Subtitle burn failed, using merged video: %v", err)
+			} else {
+				finalPath = burnedPath
+			}
 		}
 	}
 

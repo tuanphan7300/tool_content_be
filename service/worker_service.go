@@ -293,7 +293,28 @@ func (ws *WorkerService) runBurnSubtitle(job *AudioProcessingJob) (string, error
 	// Xử lý màu chữ và màu nền với solid background box
 	color := hexToASSColor(job.SubtitleColor)
 	bgcolor := hexToASSColor(job.SubtitleBgColor)
-	forceStyle := fmt.Sprintf("Fontsize=24,PrimaryColour=%s,BackColour=%s,Outline=2,Shadow=0,BorderStyle=3", color, bgcolor)
+
+	// Detect language from SRT content
+	srtContentBytes, err := os.ReadFile(subPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read SRT file for language detection: %v", err)
+	}
+	lang := DetectSRTLanguage(string(srtContentBytes))
+	fontMap := map[string]string{
+		"zh": "Noto Sans CJK SC",
+		"ja": "Noto Sans CJK JP",
+		"ko": "Noto Sans CJK KR",
+		"vi": "Arial",
+		"en": "Arial",
+		"fr": "DejaVu Sans",
+		"de": "DejaVu Sans",
+		"es": "DejaVu Sans",
+	}
+	fontName, ok := fontMap[lang]
+	if !ok {
+		fontName = "Arial Unicode MS" // fallback
+	}
+	forceStyle := fmt.Sprintf("Fontname=%s,Fontsize=24,PrimaryColour=%s,BackColour=%s,Outline=2,Shadow=0,BorderStyle=3", fontName, color, bgcolor)
 
 	cmd := exec.Command(
 		"ffmpeg",

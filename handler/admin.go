@@ -99,6 +99,32 @@ type AdminUploadListItem struct {
 	UserName            string    `json:"user_name"`
 }
 
+// Credit usage summary for a video (for list API)
+type AdminCreditUsageVideoItem struct {
+	VideoID         uint      `json:"video_id"`
+	VideoFilename   string    `json:"video_filename"`
+	UserID          uint      `json:"user_id"`
+	UserName        string    `json:"user_name"`
+	UserEmail       string    `json:"user_email"`
+	TotalCredit     float64   `json:"total_credit"`
+	TotalBaseAmount float64   `json:"total_base_amount"`
+	TotalProfit     float64   `json:"total_profit"`
+	CreatedAt       time.Time `json:"created_at"`
+	ProcessType     string    `json:"process_type"`
+}
+
+// Credit usage detail for a video (for detail API)
+type AdminCreditUsageDetailItem struct {
+	Service     string    `json:"service"`
+	Amount      float64   `json:"amount"`
+	BaseAmount  float64   `json:"base_amount"`
+	Profit      float64   `json:"profit"`
+	PricingType string    `json:"pricing_type"`
+	UnitsUsed   float64   `json:"units_used"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 // AdminLoginHandler handles admin login
 func AdminLoginHandler(c *gin.Context) {
 	var req AdminLoginRequest
@@ -823,6 +849,106 @@ func CancelAdminPaymentOrder(c *gin.Context) {
 		"message":      "Order cancelled successfully",
 		"order_status": "cancelled",
 	})
+}
+
+// GET /admin/credit-usage
+func AdminCreditUsageListHandler(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	// Optional: filter by user_id, date range, pagination
+	var videos []config.CaptionHistory
+	query := db.Model(&config.CaptionHistory{})
+	if userID := c.Query("user_id"); userID != "" {
+		query = query.Where("user_id = ?", userID)
+	}
+	// Only videos that have credit transactions
+	query = query.Order("created_at DESC")
+	if err := query.Find(&videos).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách video"})
+		return
+	}
+
+	// Preload all users for mapping
+	var users []config.Users
+	db.Find(&users)
+	userMap := map[uint]config.Users{}
+	for _, u := range users {
+		userMap[u.ID] = u
+	}
+
+	// Preload all process status for mapping (video_id -> process_type)
+	type ProcessStatus struct {
+		VideoID     uint
+		ProcessType string
+		CreatedAt   time.Time
+	}
+	var processStatuses []ProcessStatus
+	db.Table("user_process_status").
+		Select("video_id, process_type, MAX(created_at) as created_at").
+		Group("video_id, process_type").
+		Scan(&processStatuses)
+	processTypeMap := map[uint]string{}
+	for _, ps := range processStatuses {
+		if _, ok := processTypeMap[ps.VideoID]; !ok {
+			processTypeMap[ps.VideoID] = ps.ProcessType
+		}
+	}
+
+	// For each video, sum credit transactions
+	var result []AdminCreditUsageVideoItem
+	for _, v := range videos {
+		var txs []config.CreditTransaction
+		db.Where("video_id = ? AND transaction_type = ?", v.ID, "deduct").Find(&txs)
+		totalCredit := 0.0
+		totalBase := 0.0
+		for _, t := range txs {
+			totalCredit += t.Amount
+			totalBase += t.BaseAmount
+		}
+		profit := totalCredit - totalBase
+		u := userMap[v.UserID]
+		processType := processTypeMap[v.ID]
+		result = append(result, AdminCreditUsageVideoItem{
+			VideoID:         v.ID,
+			VideoFilename:   v.VideoFilename,
+			UserID:          v.UserID,
+			UserName:        u.Name,
+			UserEmail:       u.Email,
+			TotalCredit:     totalCredit,
+			TotalBaseAmount: totalBase,
+			TotalProfit:     profit,
+			CreatedAt:       v.CreatedAt,
+			ProcessType:     processType,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"videos": result})
+}
+
+// GET /admin/credit-usage/:video_id
+func AdminCreditUsageDetailHandler(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	videoIDStr := c.Param("video_id")
+	videoID, err := strconv.ParseUint(videoIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Video ID không hợp lệ"})
+		return
+	}
+	var txs []config.CreditTransaction
+	db.Where("video_id = ? AND transaction_type = ?", videoID, "deduct").Order("created_at").Find(&txs)
+	var details []AdminCreditUsageDetailItem
+	for _, t := range txs {
+		profit := t.Amount - t.BaseAmount
+		details = append(details, AdminCreditUsageDetailItem{
+			Service:     t.Service,
+			Amount:      t.Amount,
+			BaseAmount:  t.BaseAmount,
+			Profit:      profit,
+			PricingType: t.PricingType,
+			UnitsUsed:   t.UnitsUsed,
+			Description: t.Description,
+			CreatedAt:   t.CreatedAt,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"details": details})
 }
 
 // Helper function to generate admin JWT token

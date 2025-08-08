@@ -4,6 +4,7 @@ import (
 	"creator-tool-backend/config"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -182,9 +183,10 @@ func (s *CreditService) DeductCredits(userID uint, baseAmount float64, service, 
 		}
 	}()
 
-	// Tính final amount với markup
+	// Tính final amount với markup (chuẩn hóa tên service để áp dụng đúng markup nhóm)
 	pricingService := NewPricingService()
-	finalAmount, err := pricingService.CalculateUserPrice(baseAmount, service, userID)
+	markupService := normalizeServiceForMarkup(service)
+	finalAmount, err := pricingService.CalculateUserPrice(baseAmount, markupService, userID)
 	if err != nil {
 		// Fallback to base amount nếu có lỗi
 		finalAmount = baseAmount
@@ -240,6 +242,26 @@ func (s *CreditService) DeductCredits(userID uint, baseAmount float64, service, 
 		finalAmount, baseAmount, markupAmount, userID, service)
 
 	return tx.Commit().Error
+}
+
+// normalizeServiceForMarkup chuẩn hóa tên service con về nhóm để tính markup đúng
+// Ví dụ: "gemini_2.0_flash" -> "gemini", "gpt_4o_mini" -> "gpt"
+func normalizeServiceForMarkup(service string) string {
+	// Đơn giản hóa theo prefix/phần chứa
+	// Giữ nguyên các service cơ bản đã chuẩn hóa
+	switch service {
+	case "whisper", "tts", "process-video", "create-subtitle", "tiktok-optimizer":
+		return service
+	}
+	// Gom nhóm theo từ khóa
+	if strings.Contains(service, "gemini") {
+		return "gemini"
+	}
+	if strings.Contains(service, "gpt") {
+		return "gpt"
+	}
+	// Mặc định trả về chính nó nếu không biết
+	return service
 }
 
 // AddCredits thêm credit cho user

@@ -854,17 +854,63 @@ func CancelAdminPaymentOrder(c *gin.Context) {
 // GET /admin/credit-usage
 func AdminCreditUsageListHandler(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)
-	// Optional: filter by user_id, date range, pagination
-	var videos []config.CaptionHistory
-	query := db.Model(&config.CaptionHistory{})
+
+	// Parse pagination parameters
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	offset := (page - 1) * limit
+
+	// Parse date range filters
+	fromDate := c.Query("from_date")
+	toDate := c.Query("to_date")
+
+	// Lấy tất cả process status có video_id
+	var processStatuses []config.UserProcessStatus
+	query := db.Model(&config.UserProcessStatus{}).
+		Where("video_id IS NOT NULL")
+
 	if userID := c.Query("user_id"); userID != "" {
 		query = query.Where("user_id = ?", userID)
 	}
-	// Only videos that have credit transactions
-	query = query.Order("created_at DESC")
-	if err := query.Find(&videos).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách video"})
+
+	// Apply date range filters
+	if fromDate != "" {
+		query = query.Where("created_at >= ?", fromDate)
+	}
+	if toDate != "" {
+		query = query.Where("created_at <= ?", toDate+" 23:59:59")
+	}
+
+	// Get total count for pagination
+	var total int64
+	query.Count(&total)
+
+	query = query.Order("created_at DESC").
+		Limit(limit).
+		Offset(offset)
+
+	if err := query.Find(&processStatuses).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách process status"})
 		return
+	}
+
+	// Lấy video details
+	var videoIDs []uint
+	for _, ps := range processStatuses {
+		if ps.VideoID != nil {
+			videoIDs = append(videoIDs, *ps.VideoID)
+		}
+	}
+
+	var videos []config.CaptionHistory
+	if len(videoIDs) > 0 {
+		db.Where("id IN (?)", videoIDs).Find(&videos)
+	}
+
+	// Create video map for quick lookup
+	videoMap := make(map[uint]config.CaptionHistory)
+	for _, v := range videos {
+		videoMap[v.ID] = v
 	}
 
 	// Preload all users for mapping
@@ -875,52 +921,73 @@ func AdminCreditUsageListHandler(c *gin.Context) {
 		userMap[u.ID] = u
 	}
 
-	// Preload all process status for mapping (video_id -> process_type)
-	type ProcessStatus struct {
-		VideoID     uint
-		ProcessType string
-		CreatedAt   time.Time
-	}
-	var processStatuses []ProcessStatus
-	db.Table("user_process_status").
-		Select("video_id, process_type, MAX(created_at) as created_at").
-		Group("video_id, process_type").
-		Scan(&processStatuses)
-	processTypeMap := map[uint]string{}
-	for _, ps := range processStatuses {
-		if _, ok := processTypeMap[ps.VideoID]; !ok {
-			processTypeMap[ps.VideoID] = ps.ProcessType
-		}
-	}
-
-	// For each video, sum credit transactions
+	// For each process status, calculate credit usage
 	var result []AdminCreditUsageVideoItem
-	for _, v := range videos {
+	for _, ps := range processStatuses {
+		if ps.VideoID == nil {
+			continue
+		}
+
+		video, exists := videoMap[*ps.VideoID]
+		if !exists {
+			continue
+		}
+
+		// Tính tổng credit cho video này
 		var txs []config.CreditTransaction
-		db.Where("video_id = ? AND transaction_type = ?", v.ID, "deduct").Find(&txs)
+		db.Where("video_id = ? AND transaction_type = ?", *ps.VideoID, "deduct").Find(&txs)
+
 		totalCredit := 0.0
 		totalBase := 0.0
 		for _, t := range txs {
 			totalCredit += t.Amount
 			totalBase += t.BaseAmount
 		}
-		profit := totalCredit - totalBase
-		u := userMap[v.UserID]
-		processType := processTypeMap[v.ID]
-		result = append(result, AdminCreditUsageVideoItem{
-			VideoID:         v.ID,
-			VideoFilename:   v.VideoFilename,
-			UserID:          v.UserID,
-			UserName:        u.Name,
-			UserEmail:       u.Email,
-			TotalCredit:     totalCredit,
-			TotalBaseAmount: totalBase,
-			TotalProfit:     profit,
-			CreatedAt:       v.CreatedAt,
-			ProcessType:     processType,
-		})
+
+		// Đặc biệt xử lý cho burn-sub process type
+		// burn-sub có thể có video_id = NULL trong credit_transaction
+		if ps.ProcessType == "burn-sub" && totalCredit == 0 {
+			// Tìm giao dịch burn-sub có video_id = NULL trong cùng thời gian
+			var burnSubTxs []config.CreditTransaction
+			db.Where("service = ? AND transaction_type = ? AND video_id IS NULL AND created_at BETWEEN ? AND ?",
+				"burn-sub", "deduct", ps.CreatedAt.Add(-time.Minute), ps.CreatedAt.Add(time.Minute)).
+				Find(&burnSubTxs)
+
+			for _, t := range burnSubTxs {
+				totalCredit += t.Amount
+				totalBase += t.BaseAmount
+			}
+		}
+
+		// Chỉ thêm vào kết quả nếu có giao dịch credit
+		if totalCredit > 0 {
+			profit := totalCredit - totalBase
+			u := userMap[ps.UserID]
+
+			result = append(result, AdminCreditUsageVideoItem{
+				VideoID:         *ps.VideoID,
+				VideoFilename:   video.VideoFilename,
+				UserID:          ps.UserID,
+				UserName:        u.Name,
+				UserEmail:       u.Email,
+				TotalCredit:     totalCredit,
+				TotalBaseAmount: totalBase,
+				TotalProfit:     profit,
+				CreatedAt:       ps.CreatedAt,
+				ProcessType:     ps.ProcessType,
+			})
+		}
 	}
-	c.JSON(http.StatusOK, gin.H{"videos": result})
+
+	c.JSON(http.StatusOK, gin.H{
+		"videos": result,
+		"pagination": gin.H{
+			"page":  page,
+			"limit": limit,
+			"total": total,
+			"pages": (int(total) + limit - 1) / limit,
+		},
+	})
 }
 
 // GET /admin/credit-usage/:video_id
@@ -932,8 +999,34 @@ func AdminCreditUsageDetailHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Video ID không hợp lệ"})
 		return
 	}
+
+	// Lấy thông tin video
+	var video config.CaptionHistory
+	if err := db.Where("id = ?", videoID).First(&video).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Video không tồn tại"})
+		return
+	}
+
+	// Lấy process status để xác định process type
+	var processStatus config.UserProcessStatus
+	db.Where("video_id = ?", videoID).Order("created_at DESC").First(&processStatus)
+
+	// Lấy tất cả giao dịch credit cho video này
 	var txs []config.CreditTransaction
 	db.Where("video_id = ? AND transaction_type = ?", videoID, "deduct").Order("created_at").Find(&txs)
+
+	// Nếu là burn-sub và không có giao dịch, tìm giao dịch có video_id = NULL
+	if processStatus.ProcessType == "burn-sub" && len(txs) == 0 {
+		// Tìm giao dịch burn-sub có video_id = NULL trong khoảng thời gian gần với process status
+		var burnSubTxs []config.CreditTransaction
+		db.Where("service = ? AND transaction_type = ? AND video_id IS NULL AND created_at BETWEEN ? AND ?",
+			"burn-sub", "deduct", processStatus.CreatedAt.Add(-time.Minute), processStatus.CreatedAt.Add(time.Minute)).
+			Order("created_at").
+			Find(&burnSubTxs)
+
+		txs = burnSubTxs
+	}
+
 	var details []AdminCreditUsageDetailItem
 	for _, t := range txs {
 		profit := t.Amount - t.BaseAmount
@@ -948,7 +1041,32 @@ func AdminCreditUsageDetailHandler(c *gin.Context) {
 			CreatedAt:   t.CreatedAt,
 		})
 	}
-	c.JSON(http.StatusOK, gin.H{"details": details})
+
+	// Tính tổng
+	totalCredit := 0.0
+	totalBaseAmount := 0.0
+	totalProfit := 0.0
+	for _, t := range txs {
+		totalCredit += t.Amount
+		totalBaseAmount += t.BaseAmount
+		totalProfit += (t.Amount - t.BaseAmount)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"video_info": gin.H{
+			"video_id":       video.ID,
+			"video_filename": video.VideoFilename,
+			"process_type":   processStatus.ProcessType,
+			"created_at":     video.CreatedAt,
+		},
+		"details": details,
+		"summary": gin.H{
+			"total_credit":      totalCredit,
+			"total_base_amount": totalBaseAmount,
+			"total_profit":      totalProfit,
+			"transaction_count": len(txs),
+		},
+	})
 }
 
 // Helper function to generate admin JWT token

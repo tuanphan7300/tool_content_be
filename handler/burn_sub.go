@@ -101,10 +101,20 @@ func BurnSubHandler(c *gin.Context) {
 		return
 	}
 
+	// Sử dụng thư mục tạm đã tạo
+	videoDir := tempDir
+	videoPath := tempVideoPath
+
 	// --- LOCK CREDIT TRƯỚC KHI XỬ LÝ ---
 	_, err = creditService.LockCredits(userID, burnSubPricing.PricePerUnit, "burn-sub", "Lock credit for burn subtitle", nil)
 	if err != nil {
-		util.CleanupDir(tempDir)
+		// Cập nhật trạng thái process thành failed
+		processID := c.GetUint("process_id")
+		if processID > 0 {
+			processService := service.NewProcessStatusService()
+			processService.UpdateProcessStatus(processID, "failed")
+		}
+		util.CleanupDir(videoDir)
 		c.JSON(http.StatusPaymentRequired, gin.H{
 			"error":   "Không đủ credit để burn subtitle",
 			"warning": "Số dư tài khoản của bạn không đủ để sử dụng dịch vụ này. Vui lòng nạp thêm credit để tiếp tục sử dụng!",
@@ -118,10 +128,6 @@ func BurnSubHandler(c *gin.Context) {
 			panic(r)
 		}
 	}()
-
-	// Sử dụng thư mục tạm đã tạo
-	videoDir := tempDir
-	videoPath := tempVideoPath
 
 	// Lưu file sub vào thư mục tạm
 	safeSubName := strings.ReplaceAll(subFile.Filename, " ", "_")

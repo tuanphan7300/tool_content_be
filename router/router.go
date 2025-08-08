@@ -125,6 +125,8 @@ func SetupRoutes(r *gin.Engine) {
 			adminProtected.POST("/payments/:id/cancel", handler.CancelAdminPaymentOrder)
 		}
 		admin.GET("/payment/email-logs", handler.GetPaymentEmailLogs)
+		admin.GET("/credit-usage", handler.AdminCreditUsageListHandler)
+		admin.GET("/credit-usage/:video_id", handler.AdminCreditUsageDetailHandler)
 	}
 
 	// Serve static files

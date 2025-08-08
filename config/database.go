@@ -165,9 +165,9 @@ type ServiceMarkup struct {
 type UserCredits struct {
 	ID            uint      `json:"id" gorm:"primaryKey"`
 	UserID        uint      `json:"user_id" gorm:"uniqueIndex"`
-	TotalCredits  float64   `json:"total_credits" gorm:"type:decimal(10,2);default:0.00"`
-	UsedCredits   float64   `json:"used_credits" gorm:"type:decimal(10,2);default:0.00"`
-	LockedCredits float64   `json:"locked_credits" gorm:"type:decimal(10,2);default:0.00"`
+	TotalCredits  float64   `json:"total_credits" gorm:"type:decimal(12,6);default:0.000000"`
+	UsedCredits   float64   `json:"used_credits" gorm:"type:decimal(12,6);default:0.000000"`
+	LockedCredits float64   `json:"locked_credits" gorm:"type:decimal(12,6);default:0.000000"`
 	TierID        int       `json:"tier_id" gorm:"default:1"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
@@ -178,12 +178,12 @@ type CreditTransaction struct {
 	ID                uint      `json:"id" gorm:"primaryKey"`
 	UserID            uint      `json:"user_id" gorm:"index"`
 	TransactionType   string    `json:"transaction_type" gorm:"type:enum('add','deduct','lock','unlock','refund')"`
-	Amount            float64   `json:"amount" gorm:"type:decimal(10,2)"`
-	BaseAmount        float64   `json:"base_amount" gorm:"type:decimal(10,6);default:0.00"`
+	Amount            float64   `json:"amount" gorm:"type:decimal(12,6);default:0.000000"`
+	BaseAmount        float64   `json:"base_amount" gorm:"type:decimal(12,6);default:0.000000"`
 	Service           string    `json:"service"`
 	Description       string    `json:"description"`
 	PricingType       string    `json:"pricing_type"`
-	UnitsUsed         float64   `json:"units_used" gorm:"type:decimal(10,6);default:0.00"`
+	UnitsUsed         float64   `json:"units_used" gorm:"type:decimal(12,6);default:0.000000"`
 	VideoID           *uint     `json:"video_id"`
 	TransactionStatus string    `json:"transaction_status" gorm:"type:enum('pending','completed','failed','refunded');default:'completed'"`
 	ReferenceID       string    `json:"reference_id"`

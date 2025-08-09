@@ -22,11 +22,20 @@ type AudioProcessingJob struct {
 	ProcessID       uint    `json:"process_id"`   // ID từ user_process_status
 	Priority        int     `json:"priority"`     // 1-10, 10 là cao nhất
 	MaxDuration     float64 `json:"max_duration"` // Giới hạn thời gian xử lý
-	JobType         string  `json:"job_type"`     // "demucs", "burn-sub"...
+	JobType         string  `json:"job_type"`     // "demucs", "burn-sub", "process-video"...
 	SubtitlePath    string  `json:"subtitle_path"`
 	OutputPath      string  `json:"output_path"`
 	SubtitleColor   string  `json:"subtitle_color"`
 	SubtitleBgColor string  `json:"subtitle_bgcolor"`
+
+	// Additional fields for process-video
+	TargetLanguage   string  `json:"target_language"`
+	ServiceName      string  `json:"service_name"`
+	HasCustomSrt     bool    `json:"has_custom_srt"`
+	CustomSrtPath    string  `json:"custom_srt_path"`
+	BackgroundVolume float64 `json:"background_volume"`
+	TTSVolume        float64 `json:"tts_volume"`
+	SpeakingRate     float64 `json:"speaking_rate"`
 }
 
 type QueueService struct {

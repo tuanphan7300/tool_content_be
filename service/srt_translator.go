@@ -18,16 +18,29 @@ func TranslateSRTFile(srtFilePath, apiKey, targetLanguage, modelName string) (st
 	}
 
 	// Create the prompt for Gemini
-	prompt := fmt.Sprintf(`Hãy dịch file SRT sang %s.
-
+	prompt := fmt.Sprintf(`Hãy dịch file SRT sang %s, tối ưu hóa đặc biệt cho Text-to-Speech (TTS).
+Mục tiêu cuối cùng là bản dịch khi được đọc lên phải vừa vặn một cách tự nhiên trong khoảng thời gian cho phép, đồng thời phản ánh đúng sắc thái và mối quan hệ của nhân vật qua cách xưng hô.
 TUÂN THỦ NGHIÊM NGẶT CÁC QUY TẮC SAU:
-
-QUY TẮC QUAN TRỌNG NHẤT: Giữ nguyên 100%% số thứ tự và dòng thời gian (timestamps) từ file gốc. TUYỆT ĐỐI KHÔNG được thay đổi, làm tròn, hay "sửa lỗi" thời gian. Dòng thời gian phải được sao chép y hệt.
-
-Về nội dung: Dịch tự nhiên, truyền cảm, phù hợp với văn nói. Rút gọn các câu quá dài để khớp với thời gian hiển thị.
-
-Kiểm tra cuối cùng: Trước khi xuất kết quả, hãy tự kiểm tra lại để chắc chắn không có dòng thời gian nào bị sai lệch.
-
+QUY TẮC 1: TIMESTAMP VÀ SỐ THỨ TỰ LÀ BẤT BIẾN
+Giữ nguyên 100% số thứ tự và dòng thời gian (timestamps) từ file gốc.
+TUYỆT ĐỐI KHÔNG được thay đổi, làm tròn, hay "sửa lỗi" thời gian. Đây là quy tắc quan trọng nhất.
+QUY TẮC 2: ƯU TIÊN HÀNG ĐẦU LÀ ĐỘ DÀI CÂU DỊCH
+Ngắn gọn là Vua: Câu dịch phải đủ ngắn để đọc xong trong khoảng thời gian của timestamp. Đây là ưu tiên cao hơn việc dịch đầy đủ từng chữ.
+Chủ động cô đọng ý: Nắm bắt ý chính và diễn đạt lại một cách súc tích nhất có thể trong văn nói. Mạnh dạn loại bỏ các từ phụ không làm thay đổi ý nghĩa cốt lõi.
+Áp dụng quy tắc Ký tự/Giây (CPS): Cố gắng giữ cho câu dịch không vượt quá 17 ký tự cho mỗi giây thời lượng.
+Ví dụ: Nếu thời lượng là 2 giây, câu dịch nên dài khoảng 34 ký tự.
+QUY TẮC 3: DỊCH TỰ NHIÊN, LINH HOẠT VỀ XƯNG HÔ
+Ưu tiên sự tự nhiên và phù hợp với ngữ cảnh giao tiếp.
+Về cách xưng hô:
+Đối với ngôi thứ nhất, "tôi" là lựa chọn mặc định an toàn và phổ biến nhất trong các tình huống trang trọng hoặc với người lạ.
+Tuy nhiên, khi bối cảnh là cuộc trò chuyện thân mật, suồng sã giữa bạn bè, người thân hoặc những người ngang hàng, hãy chủ động sử dụng các đại từ tự nhiên hơn như "tao - mày", "tớ - cậu", v.v., để giữ được sự chân thực của lời thoại.
+Hạn chế sử dụng đại từ "ta" trừ khi bối cảnh thật sự đặc trưng (nhân vật là vua chúa, thần linh, hoặc có tính cách rất ngạo mạn).
+Mục tiêu là làm cho lời thoại chân thực như người Việt đang nói chuyện, chứ không phải là một bản dịch máy móc.
+KIỂM TRA CUỐI CÙNG:
+Trước khi xuất kết quả, hãy tự kiểm tra lại để chắc chắn:
+Không có dòng thời gian nào bị sai lệch.
+Độ dài câu dịch hợp lý với thời gian hiển thị.
+Cách xưng hô ("tôi", "tao", "tớ", "mày"...) tự nhiên và phù hợp với ngữ cảnh của đoạn hội thoại.
 File SRT gốc:
 %s`, targetLanguage, string(srtContent))
 
@@ -210,16 +223,29 @@ func TranslateSRTFileWithModelAndLanguage(srtFilePath, apiKey, modelName, target
 	}
 
 	// Create the prompt for Gemini with dynamic target language
-	prompt := fmt.Sprintf(`Hãy dịch file SRT sang %s.
-
+	prompt := fmt.Sprintf(`Hãy dịch file SRT sang %s, tối ưu hóa đặc biệt cho Text-to-Speech (TTS).
+Mục tiêu cuối cùng là bản dịch khi được đọc lên phải vừa vặn một cách tự nhiên trong khoảng thời gian cho phép, đồng thời phản ánh đúng sắc thái và mối quan hệ của nhân vật qua cách xưng hô.
 TUÂN THỦ NGHIÊM NGẶT CÁC QUY TẮC SAU:
-
-QUY TẮC QUAN TRỌNG NHẤT: Giữ nguyên 100%% số thứ tự và dòng thời gian (timestamps) từ file gốc. TUYỆT ĐỐI KHÔNG được thay đổi, làm tròn, hay "sửa lỗi" thời gian. Dòng thời gian phải được sao chép y hệt.
-
-Về nội dung: Dịch tự nhiên, truyền cảm, phù hợp với văn nói. Rút gọn các câu quá dài để khớp với thời gian hiển thị.
-
-Kiểm tra cuối cùng: Trước khi xuất kết quả, hãy tự kiểm tra lại để chắc chắn không có dòng thời gian nào bị sai lệch.
-
+QUY TẮC 1: TIMESTAMP VÀ SỐ THỨ TỰ LÀ BẤT BIẾN
+Giữ nguyên 100% số thứ tự và dòng thời gian (timestamps) từ file gốc.
+TUYỆT ĐỐI KHÔNG được thay đổi, làm tròn, hay "sửa lỗi" thời gian. Đây là quy tắc quan trọng nhất.
+QUY TẮC 2: ƯU TIÊN HÀNG ĐẦU LÀ ĐỘ DÀI CÂU DỊCH
+Ngắn gọn là Vua: Câu dịch phải đủ ngắn để đọc xong trong khoảng thời gian của timestamp. Đây là ưu tiên cao hơn việc dịch đầy đủ từng chữ.
+Chủ động cô đọng ý: Nắm bắt ý chính và diễn đạt lại một cách súc tích nhất có thể trong văn nói. Mạnh dạn loại bỏ các từ phụ không làm thay đổi ý nghĩa cốt lõi.
+Áp dụng quy tắc Ký tự/Giây (CPS): Cố gắng giữ cho câu dịch không vượt quá 17 ký tự cho mỗi giây thời lượng.
+Ví dụ: Nếu thời lượng là 2 giây, câu dịch nên dài khoảng 34 ký tự.
+QUY TẮC 3: DỊCH TỰ NHIÊN, LINH HOẠT VỀ XƯNG HÔ
+Ưu tiên sự tự nhiên và phù hợp với ngữ cảnh giao tiếp.
+Về cách xưng hô:
+Đối với ngôi thứ nhất, "tôi" là lựa chọn mặc định an toàn và phổ biến nhất trong các tình huống trang trọng hoặc với người lạ.
+Tuy nhiên, khi bối cảnh là cuộc trò chuyện thân mật, suồng sã giữa bạn bè, người thân hoặc những người ngang hàng, hãy chủ động sử dụng các đại từ tự nhiên hơn như "tao - mày", "tớ - cậu", v.v., để giữ được sự chân thực của lời thoại.
+Hạn chế sử dụng đại từ "ta" trừ khi bối cảnh thật sự đặc trưng (nhân vật là vua chúa, thần linh, hoặc có tính cách rất ngạo mạn).
+Mục tiêu là làm cho lời thoại chân thực như người Việt đang nói chuyện, chứ không phải là một bản dịch máy móc.
+KIỂM TRA CUỐI CÙNG:
+Trước khi xuất kết quả, hãy tự kiểm tra lại để chắc chắn:
+Không có dòng thời gian nào bị sai lệch.
+Độ dài câu dịch hợp lý với thời gian hiển thị.
+Cách xưng hô ("tôi", "tao", "tớ", "mày"...) tự nhiên và phù hợp với ngữ cảnh của đoạn hội thoại.
 File SRT gốc:
 %s`, targetLangName, string(srtContent))
 

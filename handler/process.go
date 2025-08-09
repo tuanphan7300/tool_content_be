@@ -963,7 +963,10 @@ func TikTokOptimizerHandler(c *gin.Context) {
 	totalCost := whisperCost + gptCost
 	_, err = creditService.LockCredits(userID, totalCost, "tiktok-optimizer", "Lock credit for TikTok Optimizer", nil)
 	if err != nil {
-		config.Db.Model(processStatus).Update("status", "failed")
+		config.Db.Model(&processStatus).Updates(map[string]interface{}{
+			"status":       "failed",
+			"completed_at": time.Now(),
+		})
 		util.CleanupDir(videoDir)
 		c.JSON(http.StatusPaymentRequired, gin.H{
 			"error":   "Không đủ credit để tối ưu TikTok",
@@ -1227,7 +1230,10 @@ func CreateSubtitleHandler(c *gin.Context) {
 	creditBalance := creditBalanceMap["available_credits"]
 
 	if creditBalance < totalCost {
-		config.Db.Model(processStatus).Update("status", "failed")
+		config.Db.Model(&processStatus).Updates(map[string]interface{}{
+			"status":       "failed",
+			"completed_at": time.Now(),
+		})
 		util.CleanupDir(videoDir)
 		c.JSON(http.StatusPaymentRequired, gin.H{
 			"error":   "Không đủ credit",
@@ -1816,5 +1822,180 @@ func GetProcessingProgressHandler(c *gin.Context) {
 		"completed_at": processStatus.CompletedAt,
 		"created_at":   processStatus.CreatedAt,
 		"updated_at":   processStatus.UpdatedAt,
+	})
+}
+
+// ProcessVideoAsyncHandler xử lý video bất đồng bộ qua queue system
+func ProcessVideoAsyncHandler(c *gin.Context) {
+	// Nhận file video
+	videoFile, err := c.FormFile("file")
+	if err != nil {
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
+		return
+	}
+
+	// Kiểm tra kích thước file không quá 100MB
+	if videoFile.Size > 100*1024*1024 {
+		util.HandleError(c, http.StatusBadRequest, util.ErrFileTooLarge, nil)
+		return
+	}
+
+	// Lấy user_id từ token
+	userID := c.GetUint("user_id")
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Lấy process_id từ middleware
+	processID := c.GetUint("process_id")
+
+	// Lấy các tham số
+	targetLanguage := c.PostForm("target_language")
+	if targetLanguage == "" {
+		targetLanguage = "vi"
+	}
+
+	serviceName := c.PostForm("service_name")
+	if serviceName == "" {
+		serviceName = "gpt-4o-mini"
+	}
+
+	// Get subtitle color parameters
+	subtitleColor := c.PostForm("subtitle_color")
+	if subtitleColor == "" {
+		subtitleColor = "#FFFFFF" // Default to white
+	}
+	subtitleBgColor := c.PostForm("subtitle_bgcolor")
+	if subtitleBgColor == "" {
+		subtitleBgColor = "#808080" // Default to gray
+	}
+
+	// Get volume and rate parameters
+	backgroundVolume := 1.2
+	if v := c.PostForm("background_volume"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			backgroundVolume = f
+		}
+	}
+	ttsVolume := 1.5
+	if v := c.PostForm("tts_volume"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			ttsVolume = f
+		}
+	}
+	speakingRate := 1.2
+	if v := c.PostForm("speaking_rate"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			speakingRate = f
+		}
+	}
+
+	// Tạo thư mục lưu file
+	timestamp := time.Now().UnixNano()
+	baseName := strings.TrimSuffix(filepath.Base(videoFile.Filename), filepath.Ext(videoFile.Filename))
+	uniqueName := fmt.Sprintf("%d_%s%s", timestamp, baseName, filepath.Ext(videoFile.Filename))
+	videoDir := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName)))
+	if err := os.MkdirAll(videoDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create video directory"})
+		return
+	}
+
+	// Lưu file video
+	safeVideoName := strings.ReplaceAll(videoFile.Filename, " ", "_")
+	videoPath := filepath.Join(videoDir, safeVideoName)
+	if err := c.SaveUploadedFile(videoFile, videoPath); err != nil {
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save video file"})
+		return
+	}
+
+	// Kiểm tra duration
+	audioPath, err := util.ProcessfileToDir(c, videoFile, videoDir)
+	if err != nil {
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract audio"})
+		return
+	}
+	duration, _ := util.GetAudioDuration(audioPath)
+	if duration > 420 {
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 7 phút."})
+		return
+	}
+
+	// Tính toán chi phí ước tính
+	creditService := service.NewCreditService()
+
+	// Ước tính chi phí (sử dụng ước tính đơn giản)
+	estimatedCost := 0.1 // Ước tính cơ bản, sẽ được tính chính xác khi xử lý
+
+	// Lock credits
+	_, err = creditService.LockCredits(userID, estimatedCost, "process-video", "Lock credit for process video", nil)
+	if err != nil {
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusPaymentRequired, gin.H{
+			"error":   "Không đủ credit cho xử lý video",
+			"warning": "Số dư tài khoản của bạn không đủ để sử dụng dịch vụ này. Vui lòng nạp thêm credit để tiếp tục sử dụng!",
+		})
+		return
+	}
+
+	// Check for custom SRT file
+	customSrtFile, err := c.FormFile("custom_srt")
+	var hasCustomSrt bool = false
+	var customSrtPath string
+	if err == nil && customSrtFile != nil {
+		hasCustomSrt = true
+		customSrtPath = filepath.Join(videoDir, "custom.srt")
+		if err := c.SaveUploadedFile(customSrtFile, customSrtPath); err != nil {
+			util.CleanupDir(videoDir)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save custom SRT file"})
+			return
+		}
+	}
+
+	// Tạo job process-video và enqueue vào queue
+	jobID := fmt.Sprintf("processvideo_%d_%d", userID, timestamp)
+	job := &service.AudioProcessingJob{
+		ID:               jobID,
+		JobType:          "process-video",
+		UserID:           userID,
+		ProcessID:        processID,
+		FileName:         safeVideoName,
+		VideoDir:         videoDir,
+		AudioPath:        audioPath,
+		Priority:         5,
+		MaxDuration:      600, // 10 phút
+		TargetLanguage:   targetLanguage,
+		ServiceName:      serviceName,
+		SubtitleColor:    subtitleColor,
+		SubtitleBgColor:  subtitleBgColor,
+		HasCustomSrt:     hasCustomSrt,
+		CustomSrtPath:    customSrtPath,
+		BackgroundVolume: backgroundVolume,
+		TTSVolume:        ttsVolume,
+		SpeakingRate:     speakingRate,
+	}
+
+	queueService := service.GetQueueService()
+	if queueService == nil {
+		creditService.UnlockCredits(userID, estimatedCost, "process-video", "Unlock due to queue service not initialized", nil)
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Queue service not initialized"})
+		return
+	}
+
+	if err := queueService.EnqueueJob(job); err != nil {
+		creditService.UnlockCredits(userID, estimatedCost, "process-video", "Unlock due to enqueue job error", nil)
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to enqueue job"})
+		return
+	}
+
+	// Trả về process_id để frontend tracking
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Đã nhận video, đang xử lý...",
+		"process_id": jobID,
 	})
 }

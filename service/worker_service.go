@@ -164,6 +164,25 @@ func (ws *WorkerService) processJob(job *AudioProcessingJob) {
 		return
 	}
 
+	if job.JobType == "process-video" {
+		// Xử lý process video (parallel processing)
+		resultPath, err := ws.runProcessVideo(job)
+		if err != nil {
+			log.Printf("Job %s: Failed to process video: %v", job.ID, err)
+			ws.queueService.UpdateJobStatus(job.ID, "failed")
+			return
+		}
+		err = ws.queueService.StoreJobResult(job.ID, resultPath)
+		if err != nil {
+			log.Printf("Job %s: Failed to store result: %v", job.ID, err)
+			ws.queueService.UpdateJobStatus(job.ID, "failed")
+			return
+		}
+		ws.queueService.UpdateJobStatus(job.ID, "completed")
+		log.Printf("Job %s: Process video completed successfully", job.ID)
+		return
+	}
+
 	// Kiểm tra file tồn tại
 	if _, err := os.Stat(job.AudioPath); os.IsNotExist(err) {
 		log.Printf("Job %s: Audio file not found: %s", job.ID, job.AudioPath)
@@ -350,6 +369,60 @@ func (ws *WorkerService) runBurnSubtitle(job *AudioProcessingJob) (string, error
 	processService.UpdateProcessVideoID(job.ProcessID, captionHistory.ID)
 
 	return outputPath, nil
+}
+
+// runProcessVideo xử lý video với parallel processing
+func (ws *WorkerService) runProcessVideo(job *AudioProcessingJob) (string, error) {
+	log.Printf("Running process video for job %s", job.ID)
+
+	// Lấy API keys từ config
+	configg := config.InfaConfig{}
+	configg.LoadConfig()
+	apiKey := configg.ApiKey
+	geminiKey := configg.GeminiKey
+
+	// Tạo task xử lý video với đầy đủ thông tin
+	videoPath := filepath.Join(job.VideoDir, job.FileName)
+	task := NewProcessVideoParallel(videoPath, job.AudioPath, job.VideoDir, job.TargetLanguage, apiKey, geminiKey)
+
+	// Cấu hình các thuộc tính bổ sung
+	task.HasCustomSrt = job.HasCustomSrt
+	task.CustomSrtPath = job.CustomSrtPath
+	task.SubtitleColor = job.SubtitleColor
+	task.SubtitleBgColor = job.SubtitleBgColor
+	task.BackgroundVolume = job.BackgroundVolume
+	task.TTSVolume = job.TTSVolume
+	task.SpeakingRate = job.SpeakingRate
+
+	// Xử lý song song
+	result, err := task.ProcessParallel()
+	if err != nil {
+		return "", fmt.Errorf("parallel processing failed: %v", err)
+	}
+
+	// Lưu lịch sử vào database
+	captionHistory := config.CaptionHistory{
+		UserID:              job.UserID,
+		VideoFilename:       filepath.Join(job.VideoDir, job.FileName),
+		VideoFilenameOrigin: job.FileName,
+		SrtFile:             result.TranslatedSRTPath,
+		OriginalSrtFile:     result.OriginalSRTPath,
+		TTSFile:             result.TTSPath,
+		MergedVideoFile:     result.FinalVideoPath,
+		BackgroundMusic:     result.BackgroundPath,
+		ProcessType:         "process-video",
+		CreatedAt:           time.Now(),
+	}
+	if err := config.Db.Create(&captionHistory).Error; err != nil {
+		log.Printf("Failed to save process-video history: %v", err)
+	}
+
+	// Cập nhật trạng thái process thành completed
+	processService := NewProcessStatusService()
+	processService.UpdateProcessStatus(job.ProcessID, "completed")
+	processService.UpdateProcessVideoID(job.ProcessID, captionHistory.ID)
+
+	return result.FinalVideoPath, nil
 }
 
 // monitor theo dõi trạng thái của worker service

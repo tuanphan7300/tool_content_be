@@ -47,8 +47,8 @@ func InitWorkerService(queueService *QueueService) *WorkerService {
 		maxWorkers = 4 // Giới hạn tối đa 4 worker để tránh quá tải
 	}
 
-	// Giới hạn concurrent Demucs processes
-	maxConcurrent := 2 // Chỉ cho phép 2 Demucs chạy cùng lúc
+	// Giới hạn concurrent Demucs processes - Tối ưu cho 4 CPU cores
+	maxConcurrent := 3 // Tăng lên 3 để tận dụng tốt hơn 4 CPU cores
 
 	ctx, cancel := context.WithCancel(context.Background())
 

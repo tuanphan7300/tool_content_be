@@ -20,18 +20,23 @@ func NewPricingService() *PricingService {
 
 // CalculateWhisperCost tính chi phí Whisper theo thời gian audio (phút)
 func (s *PricingService) CalculateWhisperCost(durationMinutes float64) (float64, error) {
-	pricing, err := s.getServicePricing("whisper")
+	// Lấy service name từ service_config
+	serviceName, _, err := s.GetActiveServiceForType("speech_to_text")
+	if err != nil {
+		return 0, fmt.Errorf("no active speech-to-text service: %v", err)
+	}
+
+	pricing, err := s.getServicePricing(serviceName)
 	if err != nil {
 		return 0, err
 	}
 
-	// Whisper tính theo phút: $0.006 per minute
 	cost := durationMinutes * pricing.PricePerUnit
 	return cost, nil
 }
 
-// CalculateGeminiCost tính chi phí Gemini theo số token thực tế, trả về cả model_api_name
-func (s *PricingService) CalculateGeminiCost(text string, serviceName string) (float64, int, string, error) {
+// CalculateLLMCost tính chi phí mô hình LLM (Gemini/GPT) theo số token thực tế, trả về cả model_api_name
+func (s *PricingService) CalculateLLMCost(text string, serviceName string) (float64, int, string, error) {
 	pricing, err := s.getServicePricing(serviceName)
 	if err != nil {
 		return 0, 0, "", err
@@ -46,7 +51,7 @@ func (s *PricingService) CalculateGeminiCost(text string, serviceName string) (f
 	}
 
 	// Log để debug
-	log.Printf("CalculateGeminiCost: text_length=%d, tokens=%d, service_name=%s", textLength, tokens, serviceName)
+	log.Printf("CalculateLLMCost: text_length=%d, tokens=%d, service_name=%s", textLength, tokens, serviceName)
 
 	// Giới hạn tokens tối đa để tránh lỗi database
 	const maxTokens = 1000000 // 1 triệu tokens tối đa
@@ -59,11 +64,65 @@ func (s *PricingService) CalculateGeminiCost(text string, serviceName string) (f
 	return cost, tokens, modelAPIName, nil
 }
 
+// getServicePricingByPreferredNames thử lấy pricing theo danh sách tên ưu tiên
+func (s *PricingService) getServicePricingByPreferredNames(preferredNames []string) (*config.ServicePricing, error) {
+	var lastErr error
+	for _, name := range preferredNames {
+		pricing, err := s.getServicePricing(name)
+		if err == nil {
+			return pricing, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("no pricing found for preferred names")
+}
+
+// CalculateLLMCostSplit tính chi phí input và output riêng cho LLM theo token
+//   - baseServiceName: ví dụ "gemini_2.0_flash" hoặc "gpt_3.5_turbo"
+//   - Quy ước DB: tạo thêm 2 bản ghi pricing với suffix "_input" và "_output"
+//     Nếu không có, hàm sẽ fallback về baseServiceName để tránh lỗi (tính như input)
+func (s *PricingService) CalculateLLMCostSplit(inputText, outputText, baseServiceName string) (float64, float64, int, int, string, error) {
+	// Lấy model_api_name từ bản ghi base (nếu có)
+	var modelAPIName string
+	if basePricing, err := s.getServicePricing(baseServiceName); err == nil {
+		modelAPIName = basePricing.ModelAPIName
+	}
+
+	// Lấy pricing cho input và output
+	inputPricing, err := s.getServicePricingByPreferredNames([]string{baseServiceName + "_input", baseServiceName})
+	if err != nil {
+		return 0, 0, 0, 0, modelAPIName, fmt.Errorf("input pricing not found for %s: %v", baseServiceName, err)
+	}
+	outputPricing, err := s.getServicePricingByPreferredNames([]string{baseServiceName + "_output", baseServiceName})
+	if err != nil {
+		// Fallback: nếu thiếu _output và base, dùng lại inputPricing để tránh fail toàn bộ
+		outputPricing = inputPricing
+	}
+
+	// Ước tính tokens
+	inputTokens := len([]rune(inputText)) / 4
+	if inputTokens < 1 {
+		inputTokens = 1
+	}
+	outputTokens := len([]rune(outputText)) / 4
+	if outputTokens < 1 {
+		outputTokens = 1
+	}
+
+	inputCost := float64(inputTokens) * inputPricing.PricePerUnit
+	outputCost := float64(outputTokens) * outputPricing.PricePerUnit
+
+	return inputCost, outputCost, inputTokens, outputTokens, modelAPIName, nil
+}
+
 // CalculateTTSCost tính chi phí TTS theo số ký tự
 func (s *PricingService) CalculateTTSCost(text string, useWavenet bool) (float64, error) {
-	serviceName := "tts_standard"
-	if useWavenet {
-		serviceName = "tts_wavenet"
+	serviceName, _, err := s.GetActiveServiceForType("text_to_speech")
+	if err != nil {
+		return 0, fmt.Errorf("no active text-to-speech service: %v", err)
 	}
 
 	pricing, err := s.getServicePricing(serviceName)
@@ -71,7 +130,6 @@ func (s *PricingService) CalculateTTSCost(text string, useWavenet bool) (float64
 		return 0, err
 	}
 
-	// TTS tính theo ký tự
 	characters := len([]rune(text))
 	cost := float64(characters) * pricing.PricePerUnit
 	return cost, nil
@@ -323,13 +381,15 @@ func (s *PricingService) EstimateProcessVideoCost(durationMinutes float64, trans
 		return nil, fmt.Errorf("failed to get active Gemini service: %v", err)
 	}
 
-	// Gemini cost (dịch SRT) - ước tính dựa trên prompt thực tế
-	// Prompt bao gồm: instructions + SRT content
+	// Gemini/GPT cost (dịch SRT) - ước tính input + output
+	// Prompt bao gồm: instructions + SRT content (input)
+	// Output ước tính gần bằng độ dài SRT đích
 	promptLength := 500 + srtLength // 500 ký tự cho instructions
-	gemiCost, _, _, err := s.CalculateGeminiCost(strings.Repeat("a", promptLength), geminiServiceName)
+	inCost, outCost, _, _, _, err := s.CalculateLLMCostSplit(strings.Repeat("a", promptLength), strings.Repeat("a", srtLength), geminiServiceName)
 	if err != nil {
 		return nil, err
 	}
+	gemiCost := inCost + outCost
 	estimates["gemini"] = gemiCost
 
 	// TTS cost (sử dụng Wavenet cho chất lượng tốt)
@@ -368,13 +428,15 @@ func (s *PricingService) EstimateProcessVideoCostWithMarkup(durationMinutes floa
 		return nil, fmt.Errorf("failed to get active Gemini service: %v", err)
 	}
 
-	// Gemini cost (dịch SRT) - ước tính dựa trên prompt thực tế
-	// Prompt bao gồm: instructions + SRT content
+	// Gemini/GPT cost (dịch SRT) - ước tính input + output
+	// Prompt bao gồm: instructions + SRT content (input)
+	// Output ước tính gần bằng độ dài SRT đích
 	promptLength := 500 + srtLength // 500 ký tự cho instructions
-	gemiCost, _, _, err := s.CalculateGeminiCost(strings.Repeat("a", promptLength), geminiServiceName)
+	inCost, outCost, _, _, _, err := s.CalculateLLMCostSplit(strings.Repeat("a", promptLength), strings.Repeat("a", srtLength), geminiServiceName)
 	if err != nil {
 		return nil, err
 	}
+	gemiCost := inCost + outCost
 	geminiPrice, err := s.CalculateUserPrice(gemiCost, "gemini", userID)
 	if err != nil {
 		return nil, err
@@ -431,17 +493,27 @@ func (s *PricingService) GetActiveGeminiServiceName() (string, string, error) {
 
 // GetActiveServiceForType trả về service_name và model_api_name của dịch vụ active cho một service_type
 func (s *PricingService) GetActiveServiceForType(serviceType string) (string, string, error) {
-	var result struct {
-		ServiceName  string
-		ModelAPIName string
-	}
-	err := config.Db.Table("service_config as sc").
-		Select("sc.service_name, sp.model_api_name").
-		Joins("JOIN service_pricings sp ON sc.service_name = sp.service_name").
-		Where("sc.service_type = ? AND sc.is_active = 1", serviceType).
-		First(&result).Error
-	if err != nil {
+	// Bước 1: Lấy service_name đang active từ service_config
+	var sc config.ServiceConfig
+	if err := config.Db.Where("service_type = ? AND is_active = 1", serviceType).Order("service_name").First(&sc).Error; err != nil {
 		return "", "", fmt.Errorf("no active service for type %s: %v", serviceType, err)
 	}
-	return result.ServiceName, result.ModelAPIName, nil
+
+	// Bước 2: Tìm model_api_name tương ứng trong service_pricings
+	// Ưu tiên theo thứ tự: base → _input → _output
+	var pricing config.ServicePricing
+	// base
+	if err := config.Db.Where("service_name = ? AND is_active = 1", sc.ServiceName).First(&pricing).Error; err == nil {
+		return sc.ServiceName, pricing.ModelAPIName, nil
+	}
+	// _input
+	if err := config.Db.Where("service_name = ? AND is_active = 1", sc.ServiceName+"_input").First(&pricing).Error; err == nil {
+		return sc.ServiceName, pricing.ModelAPIName, nil
+	}
+	// _output
+	if err := config.Db.Where("service_name = ? AND is_active = 1", sc.ServiceName+"_output").First(&pricing).Error; err == nil {
+		return sc.ServiceName, pricing.ModelAPIName, nil
+	}
+
+	return "", "", fmt.Errorf("pricing not found for active service %s (type %s)", sc.ServiceName, serviceType)
 }

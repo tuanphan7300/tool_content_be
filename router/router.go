@@ -45,6 +45,7 @@ func SetupRoutes(r *gin.Engine) {
 		protected.POST("/process-background", handler.ProcessBackgroundMusicHandler)
 		protected.POST("/process-video", middleware.FileValidationMiddleware(), middleware.ProcessAnyStatusMiddleware(), middleware.ProcessStatusMiddleware("process-video"), handler.ProcessVideoHandler)
 		protected.POST("/process-video-parallel", middleware.FileValidationMiddleware(), middleware.ProcessAnyStatusMiddleware(), middleware.ProcessStatusMiddleware("process-video"), handler.ProcessVideoParallelHandler)
+		protected.POST("/process-video-async", middleware.FileValidationMiddleware(), middleware.ProcessAnyStatusMiddleware(), middleware.ProcessStatusMiddleware("process-video"), handler.ProcessVideoAsyncHandler)
 		protected.GET("/process/:process_id/progress", handler.GetProcessingProgressHandler)
 
 		// Cache management endpoints
@@ -125,6 +126,8 @@ func SetupRoutes(r *gin.Engine) {
 			adminProtected.POST("/payments/:id/cancel", handler.CancelAdminPaymentOrder)
 		}
 		admin.GET("/payment/email-logs", handler.GetPaymentEmailLogs)
+		admin.GET("/credit-usage", handler.AdminCreditUsageListHandler)
+		admin.GET("/credit-usage/:video_id", handler.AdminCreditUsageDetailHandler)
 	}
 
 	// Serve static files

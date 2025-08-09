@@ -1933,6 +1933,11 @@ func ProcessVideoAsyncHandler(c *gin.Context) {
 	// Lock credits
 	_, err = creditService.LockCredits(userID, estimatedCost, "process-video", "Lock credit for process video", nil)
 	if err != nil {
+		// Cập nhật trạng thái process thành failed khi không đủ credit
+		if processID > 0 {
+			processService := service.NewProcessStatusService()
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		util.CleanupDir(videoDir)
 		c.JSON(http.StatusPaymentRequired, gin.H{
 			"error":   "Không đủ credit cho xử lý video",
@@ -1981,6 +1986,11 @@ func ProcessVideoAsyncHandler(c *gin.Context) {
 	queueService := service.GetQueueService()
 	if queueService == nil {
 		creditService.UnlockCredits(userID, estimatedCost, "process-video", "Unlock due to queue service not initialized", nil)
+		// Cập nhật trạng thái process thành failed khi queue service không khả dụng
+		if processID > 0 {
+			processService := service.NewProcessStatusService()
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		util.CleanupDir(videoDir)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Queue service not initialized"})
 		return
@@ -1988,6 +1998,11 @@ func ProcessVideoAsyncHandler(c *gin.Context) {
 
 	if err := queueService.EnqueueJob(job); err != nil {
 		creditService.UnlockCredits(userID, estimatedCost, "process-video", "Unlock due to enqueue job error", nil)
+		// Cập nhật trạng thái process thành failed khi không thể enqueue job
+		if processID > 0 {
+			processService := service.NewProcessStatusService()
+			processService.UpdateProcessStatus(processID, "failed")
+		}
 		util.CleanupDir(videoDir)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to enqueue job"})
 		return

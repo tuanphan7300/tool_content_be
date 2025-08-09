@@ -130,6 +130,9 @@ func SetupRoutes(r *gin.Engine) {
 		admin.GET("/credit-usage/:video_id", handler.AdminCreditUsageDetailHandler)
 	}
 
-	// Serve static files
+	// Download endpoint với authentication
+	protected.GET("/api/download/*filepath", handler.DownloadFileHandler)
+
+	// Serve static files (fallback cho development)
 	r.Static("/storage", "./storage")
 }

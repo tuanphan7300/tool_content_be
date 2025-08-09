@@ -7,11 +7,29 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/datatypes"
 )
+
+// normalizeStoragePath đảm bảo path bắt đầu bằng /storage/ để nginx direct serving
+func normalizeStoragePath(path string) string {
+	if path == "" {
+		return ""
+	}
+	// Nếu path đã bắt đầu bằng /storage/, return nguyên
+	if strings.HasPrefix(path, "/storage/") {
+		return path
+	}
+	// Nếu path bắt đầu bằng storage/, thêm /
+	if strings.HasPrefix(path, "storage/") {
+		return "/" + path
+	}
+	// Nếu không có storage/, trả về path gốc (có thể là relative path khác)
+	return path
+}
 
 type SaveHistoryRequest struct {
 	VideoFilename string          `json:"video_filename"`
@@ -194,11 +212,11 @@ func GetHistoryHandler(c *gin.Context) {
 			Transcript:          history.Transcript,
 			Segments:            string(history.Segments),
 			SegmentsVi:          string(history.SegmentsVi),
-			BackgroundMusic:     filepath.Base(history.BackgroundMusic),
-			SrtFile:             filepath.Base(history.SrtFile),
-			OriginalSrtFile:     filepath.Base(history.OriginalSrtFile),
-			TTSFile:             filepath.Base(history.TTSFile),
-			MergedVideoFile:     filepath.Base(history.MergedVideoFile),
+			BackgroundMusic:     history.BackgroundMusic, // Nginx direct serving
+			SrtFile:             history.SrtFile,         // Nginx direct serving
+			OriginalSrtFile:     history.OriginalSrtFile, // Nginx direct serving
+			TTSFile:             history.TTSFile,         // Nginx direct serving
+			MergedVideoFile:     history.MergedVideoFile, // Nginx direct serving
 			CreatedAt:           history.CreatedAt,
 			// TikTok Optimizer fields
 			HookScore:         history.HookScore,

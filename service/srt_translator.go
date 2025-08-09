@@ -38,6 +38,7 @@ Hạn chế sử dụng đại từ "ta" trừ khi bối cảnh thật sự đ�
 Mục tiêu là làm cho lời thoại chân thực như người Việt đang nói chuyện, chứ không phải là một bản dịch máy móc.
 QUY TẮC 4: QUẢ TRẢ VỀ LUÔN LÀ ĐỊNH DẠNG SRT
 Kết quả trả về chỉ là nội dung file srt, không thêm bất kỳ 1 ghi chú hay giải thích gì khác.
+QUY TẮC 5: Tên nhân vật, hoặc địa danh. ưu tiên để dạng hán việt, ví dụ: Nhị Cẩu, Cúc Hoa, Đại Lang, Lão Tam .... Bắc Kinh, Hồ Nam, Đại Hưng An Lĩnh
 KIỂM TRA CUỐI CÙNG:
 Trước khi xuất kết quả, hãy tự kiểm tra lại để chắc chắn:
 Không có dòng thời gian nào bị sai lệch.
@@ -246,6 +247,7 @@ Hạn chế sử dụng đại từ "ta" trừ khi bối cảnh thật sự đ�
 Mục tiêu là làm cho lời thoại chân thực như người Việt đang nói chuyện, chứ không phải là một bản dịch máy móc.
 QUY TẮC 4: QUẢ TRẢ VỀ LUÔN LÀ ĐỊNH DẠNG SRT
 Kết quả trả về chỉ là nội dung file srt, không thêm bất kỳ 1 ghi chú hay giải thích gì khác.
+QUY TẮC 5: Tên nhân vật, hoặc địa danh. ưu tiên để dạng hán việt, ví dụ: Nhị Cẩu, Cúc Hoa, Đại Lang, Lão Tam .... Bắc Kinh, Hồ Nam, Đại Hưng An Lĩnh
 KIỂM TRA CUỐI CÙNG:
 Trước khi xuất kết quả, hãy tự kiểm tra lại để chắc chắn:
 Không có dòng thời gian nào bị sai lệch.

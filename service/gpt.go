@@ -224,11 +224,14 @@ Về cách xưng hô:
 Tuy nhiên, khi bối cảnh là cuộc trò chuyện thân mật, suồng sã giữa bạn bè, người thân hoặc những người ngang hàng, hãy chủ động sử dụng các đại từ tự nhiên hơn như "tao - mày", "tớ - cậu", v.v., để giữ được sự chân thực của lời thoại.
 Hạn chế sử dụng đại từ "ta" trừ khi bối cảnh thật sự đặc trưng (nhân vật là vua chúa, thần linh, hoặc có tính cách rất ngạo mạn).
 Mục tiêu là làm cho lời thoại chân thực như người Việt đang nói chuyện, chứ không phải là một bản dịch máy móc.
+QUY TẮC 4: QUẢ TRẢ VỀ LUÔN LÀ ĐỊNH DẠNG SRT
+Kết quả trả về chỉ là nội dung file srt, không thêm bất kỳ 1 ghi chú hay giải thích gì khác.
 KIỂM TRA CUỐI CÙNG:
 Trước khi xuất kết quả, hãy tự kiểm tra lại để chắc chắn:
 Không có dòng thời gian nào bị sai lệch.
 Độ dài câu dịch hợp lý với thời gian hiển thị.
 Cách xưng hô ("tôi", "tao", "tớ", "mày"...) tự nhiên và phù hợp với ngữ cảnh của đoạn hội thoại.
+Kết quả chỉ luôn là nội dung của file srt. Không thêm bất kỳ nội dung ghi chú hay giải thích nào khác
 File SRT gốc:
 %s`, languageName, string(srtContent))
 

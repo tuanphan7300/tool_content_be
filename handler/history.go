@@ -212,11 +212,11 @@ func GetHistoryHandler(c *gin.Context) {
 			Transcript:          history.Transcript,
 			Segments:            string(history.Segments),
 			SegmentsVi:          string(history.SegmentsVi),
-			BackgroundMusic:     normalizeStoragePath(history.BackgroundMusic), // Nginx direct serving
-			SrtFile:             normalizeStoragePath(history.SrtFile),         // Nginx direct serving
-			OriginalSrtFile:     normalizeStoragePath(history.OriginalSrtFile), // Nginx direct serving
-			TTSFile:             normalizeStoragePath(history.TTSFile),         // Nginx direct serving
-			MergedVideoFile:     normalizeStoragePath(history.MergedVideoFile), // Nginx direct serving
+			BackgroundMusic:     history.BackgroundMusic, // Nginx direct serving
+			SrtFile:             history.SrtFile,         // Nginx direct serving
+			OriginalSrtFile:     history.OriginalSrtFile, // Nginx direct serving
+			TTSFile:             history.TTSFile,         // Nginx direct serving
+			MergedVideoFile:     history.MergedVideoFile, // Nginx direct serving
 			CreatedAt:           history.CreatedAt,
 			// TikTok Optimizer fields
 			HookScore:         history.HookScore,

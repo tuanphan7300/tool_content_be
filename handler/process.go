@@ -1297,7 +1297,7 @@ func CreateSubtitleHandler(c *gin.Context) {
 			creditService.UnlockCredits(userID, totalCost, "create-subtitle", "Unlock credits due to service config error", nil)
 			config.Db.Model(processStatus).Update("status", "failed")
 			util.CleanupDir(videoDir)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy thông tin dịch vụ Gemini"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy thông tin dịch vụ srt_translation"})
 			return
 		}
 

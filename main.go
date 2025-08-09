@@ -97,10 +97,11 @@ func main() {
 
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"https://inis-hvnh.site", "https://videotool.com.vn", "*"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		AllowOrigins:     []string{"https://inis-hvnh.site", "https://videotool.com.vn", "http://localhost:5173", "http://localhost:3000"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Range", "If-Range"},
 		AllowCredentials: true,
+		ExposeHeaders:    []string{"Content-Length", "Content-Range", "Content-Disposition"},
 		MaxAge:           12 * time.Hour,
 	}))
 	router.SetupRoutes(r)

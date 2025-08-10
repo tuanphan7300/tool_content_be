@@ -37,7 +37,7 @@ func TextToSpeech(text string, options TTSOptions) (string, error) {
 	// Create output directory if it doesn't exist
 	outputDir := "./storage/tts"
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create output directory: %v", err)
+		return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 
 	// Generate output filename with timestamp
@@ -48,7 +48,7 @@ func TextToSpeech(text string, options TTSOptions) (string, error) {
 	ctx := context.Background()
 	client, err := texttospeech.NewClient(ctx, option.WithCredentialsFile("data/google_clound_tts_api.json"))
 	if err != nil {
-		return "", fmt.Errorf("failed to create TTS client: %v", err)
+		return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 	defer client.Close()
 
@@ -77,12 +77,12 @@ func TextToSpeech(text string, options TTSOptions) (string, error) {
 		AudioConfig: audioConfig,
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to synthesize speech: %v", err)
+		return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 
 	// Write the response to the output file
 	if err := os.WriteFile(filename, resp.AudioContent, 0644); err != nil {
-		return "", fmt.Errorf("failed to write audio file: %v", err)
+		return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 
 	return filename, nil

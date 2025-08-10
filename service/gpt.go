@@ -70,13 +70,13 @@ LƯU Ý: Caption phải bằng %s, chỉ hashtag có thể có tiếng Anh.`, tr
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GPT API Error: %s", string(respBody))
+		return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 
 	var gptResp GPTResponse
@@ -86,7 +86,7 @@ LƯU Ý: Caption phải bằng %s, chỉ hashtag có thể có tiếng Anh.`, tr
 		return gptResp.Choices[0].Message.Content, nil
 	}
 
-	return "", fmt.Errorf("No response from GPT")
+	return "", fmt.Errorf("Hệ thống không thể xử lý yêu cầu, vui lòng thử lại sau")
 }
 
 func TranslateTranscript(transcript, apiKey string) (string, error) {
@@ -111,13 +111,22 @@ func TranslateTranscript(transcript, apiKey string) (string, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GPT API Error: %s", string(respBody))
+		// Kiểm tra các loại lỗi cụ thể để đưa ra thông báo phù hợp
+		if resp.StatusCode == 429 {
+			return "", fmt.Errorf("Hệ thống đang quá tải, vui lòng thử lại sau")
+		} else if resp.StatusCode == 401 {
+			return "", fmt.Errorf("Lỗi xác thực, vui lòng liên hệ hỗ trợ")
+		} else if resp.StatusCode == 500 || resp.StatusCode == 502 || resp.StatusCode == 503 {
+			return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
+		} else {
+			return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
+		}
 	}
 
 	var gptResp GPTResponse
@@ -127,7 +136,7 @@ func TranslateTranscript(transcript, apiKey string) (string, error) {
 		return gptResp.Choices[0].Message.Content, nil
 	}
 
-	return "", fmt.Errorf("No response from GPT")
+	return "", fmt.Errorf("Hệ thống không thể xử lý yêu cầu, vui lòng thử lại sau")
 }
 
 func GenerateTikTokOptimization(prompt, apiKey string) (string, error) {
@@ -148,13 +157,22 @@ func GenerateTikTokOptimization(prompt, apiKey string) (string, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GPT API Error: %s", string(respBody))
+		// Kiểm tra các loại lỗi cụ thể để đưa ra thông báo phù hợp
+		if resp.StatusCode == 429 {
+			return "", fmt.Errorf("Hệ thống đang quá tải, vui lòng thử lại sau")
+		} else if resp.StatusCode == 401 {
+			return "", fmt.Errorf("Lỗi xác thực, vui lòng liên hệ hỗ trợ")
+		} else if resp.StatusCode == 500 || resp.StatusCode == 502 || resp.StatusCode == 503 {
+			return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
+		} else {
+			return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
+		}
 	}
 
 	var gptResp GPTResponse
@@ -164,7 +182,7 @@ func GenerateTikTokOptimization(prompt, apiKey string) (string, error) {
 		return gptResp.Choices[0].Message.Content, nil
 	}
 
-	return "", fmt.Errorf("No response from GPT")
+	return "", fmt.Errorf("Hệ thống không thể xử lý yêu cầu, vui lòng thử lại sau")
 }
 
 // GenerateCaptionWithService wrapper function that uses service_config to determine which service to use
@@ -251,13 +269,22 @@ File SRT gốc:
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GPT API Error: %s", string(respBody))
+		// Kiểm tra các loại lỗi cụ thể để đưa ra thông báo phù hợp
+		if resp.StatusCode == 429 {
+			return "", fmt.Errorf("Hệ thống đang quá tải, vui lòng thử lại sau")
+		} else if resp.StatusCode == 401 {
+			return "", fmt.Errorf("Lỗi xác thực, vui lòng liên hệ hỗ trợ")
+		} else if resp.StatusCode == 500 || resp.StatusCode == 502 || resp.StatusCode == 503 {
+			return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
+		} else {
+			return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
+		}
 	}
 
 	var gptResp GPTResponse
@@ -342,7 +369,7 @@ File SRT gốc:
 		return translatedContent, nil
 	}
 
-	return "", fmt.Errorf("No response from GPT")
+	return "", fmt.Errorf("Hệ thống không thể xử lý yêu cầu, vui lòng thử lại sau")
 }
 
 func EstimateGPTTokens(srtFilePath, modelName string) (int, error) {

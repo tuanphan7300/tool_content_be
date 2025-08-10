@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"net/http"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // GeminiRequest định nghĩa cấu trúc của request gửi tới Gemini API
@@ -61,13 +62,13 @@ func CountTokens(prompt, apiKey, modelName string) (int, error) {
 	// Chuyển payload thành JSON
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
-		return 0, fmt.Errorf("failed to marshal count tokens request: %v", err)
+		return 0, fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 
 	// Tạo HTTP request
 	req, err := http.NewRequest("POST", url+"?key="+apiKey, bytes.NewBuffer(jsonBody))
 	if err != nil {
-		return 0, fmt.Errorf("failed to create count tokens request: %v", err)
+		return 0, fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -75,25 +76,34 @@ func CountTokens(prompt, apiKey, modelName string) (int, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("failed to send count tokens request: %v", err)
+		return 0, fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 	defer resp.Body.Close()
 
 	// Đọc phản hồi
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, fmt.Errorf("failed to read count tokens response: %v", err)
+		return 0, fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("count tokens API error: %s", string(body))
+		// Kiểm tra các loại lỗi cụ thể để đưa ra thông báo phù hợp
+		if resp.StatusCode == 429 {
+			return 0, fmt.Errorf("Hệ thống đang quá tải, vui lòng thử lại sau")
+		} else if resp.StatusCode == 401 {
+			return 0, fmt.Errorf("Lỗi xác thực, vui lòng liên hệ hỗ trợ")
+		} else if resp.StatusCode == 500 || resp.StatusCode == 502 || resp.StatusCode == 503 {
+			return 0, fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
+		} else {
+			return 0, fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
+		}
 	}
 
 	// Parse phản hồi
 	var countResp CountTokensResponse
 	err = json.Unmarshal(body, &countResp)
 	if err != nil {
-		return 0, fmt.Errorf("failed to parse count tokens response: %v", err)
+		return 0, fmt.Errorf("Hệ thống không thể xử lý yêu cầu, vui lòng thử lại sau")
 	}
 
 	return countResp.TotalTokens, nil
@@ -120,13 +130,13 @@ func GenerateWithGemini(prompt, apiKey, modelName string) (string, error) {
 	// Chuyển payload thành JSON
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal Gemini request: %v", err)
+		return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 
 	// Tạo HTTP request
 	req, err := http.NewRequest("POST", url+"?key="+apiKey, bytes.NewBuffer(jsonBody))
 	if err != nil {
-		return "", fmt.Errorf("failed to create Gemini request: %v", err)
+		return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -134,37 +144,39 @@ func GenerateWithGemini(prompt, apiKey, modelName string) (string, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to send Gemini request: %v", err)
+		return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 	defer resp.Body.Close()
 
 	// Đọc phản hồi
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("failed to read Gemini response: %v", err)
+		return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("[Gemini API ERROR] Status: %d, Body: %s\n", resp.StatusCode, string(body))
-
-		// Kiểm tra nếu là lỗi quá tải
-		if strings.Contains(string(body), "overloaded") || strings.Contains(string(body), "UNAVAILABLE") || resp.StatusCode == 503 {
+		// Kiểm tra các loại lỗi cụ thể để đưa ra thông báo phù hợp
+		if resp.StatusCode == 429 {
 			return "", fmt.Errorf("Hệ thống đang quá tải, vui lòng thử lại sau")
+		} else if resp.StatusCode == 401 {
+			return "", fmt.Errorf("Lỗi xác thực, vui lòng liên hệ hỗ trợ")
+		} else if resp.StatusCode == 500 || resp.StatusCode == 502 || resp.StatusCode == 503 {
+			return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
+		} else {
+			return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 		}
-
-		return "", fmt.Errorf("Lỗi dịch thuật, vui lòng thử lại sau")
 	}
 
 	// Parse phản hồi
 	var geminiResp GeminiResponse
 	err = json.Unmarshal(body, &geminiResp)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse Gemini response: %v", err)
+		return "", fmt.Errorf("Hệ thống không thể xử lý yêu cầu, vui lòng thử lại sau")
 	}
 
 	// Kiểm tra nếu không có candidates
 	if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
-		return "", fmt.Errorf("no content returned from Gemini API")
+		return "", fmt.Errorf("Hệ thống không thể xử lý yêu cầu, vui lòng thử lại sau")
 	}
 
 	// Lấy text từ phản hồi
@@ -177,7 +189,7 @@ func TranslateSegmentsWithGemini(segmentsJSON string, apiKey string, modelName s
 	var segments []Segment
 	err := json.Unmarshal([]byte(segmentsJSON), &segments)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse segments JSON: %v", err)
+		return nil, fmt.Errorf("Hệ thống không thể xử lý yêu cầu, vui lòng thử lại sau")
 	}
 
 	// Nếu không có segments, trả về ngay
@@ -197,13 +209,13 @@ func TranslateSegmentsWithGemini(segmentsJSON string, apiKey string, modelName s
 	// Gọi Gemini API một lần duy nhất
 	translatedText, err := GenerateWithGemini(promptBuilder.String(), apiKey, modelName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to translate segments: %v", err)
+		return nil, fmt.Errorf("Hệ thống không thể xử lý yêu cầu, vui lòng thử lại sau")
 	}
 
 	// Parse phản hồi từ Gemini
 	translatedLines := strings.Split(translatedText, "\n")
 	if len(translatedLines) < len(segments) {
-		return nil, fmt.Errorf("incomplete translation: expected %d lines, got %d", len(segments), len(translatedLines))
+		return nil, fmt.Errorf("Hệ thống không thể xử lý yêu cầu, vui lòng thử lại sau")
 	}
 
 	// Cập nhật text đã dịch vào segments
@@ -216,7 +228,7 @@ func TranslateSegmentsWithGemini(segmentsJSON string, apiKey string, modelName s
 		// Loại bỏ số thứ tự (ví dụ: "1. Câu dịch 1" -> "Câu dịch 1")
 		parts := strings.SplitN(line, ". ", 2)
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid translation format at line %d: %s", i+1, line)
+			return nil, fmt.Errorf("Hệ thống không thể xử lý yêu cầu, vui lòng thử lại sau")
 		}
 
 		// Cập nhật text đã dịch

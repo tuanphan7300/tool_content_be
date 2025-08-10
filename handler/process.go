@@ -951,7 +951,7 @@ func TikTokOptimizerHandler(c *gin.Context) {
 	if err != nil {
 		config.Db.Model(processStatus).Update("status", "failed")
 		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Whisper error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Hệ thống đang gặp sự cố, vui lòng thử lại sau"})
 		return
 	}
 

@@ -423,24 +423,33 @@ func TranscribeWhisperOpenAI(filePath, apiKey string) (string, []Segment, *Whisp
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 	defer resp.Body.Close()
 
 	// Đọc response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", nil, nil, fmt.Errorf("OpenAI error: %s", string(body))
+		// Kiểm tra các loại lỗi cụ thể để đưa ra thông báo phù hợp
+		if resp.StatusCode == 429 {
+			return "", nil, nil, fmt.Errorf("Hệ thống đang quá tải, vui lòng thử lại sau")
+		} else if resp.StatusCode == 401 {
+			return "", nil, nil, fmt.Errorf("Lỗi xác thực, vui lòng liên hệ hỗ trợ")
+		} else if resp.StatusCode == 500 || resp.StatusCode == 502 || resp.StatusCode == 503 {
+			return "", nil, nil, fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
+		} else {
+			return "", nil, nil, fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
+		}
 	}
 
 	var whisperResp WhisperResponse
 	err = json.Unmarshal(body, &whisperResp)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("failed to parse whisper response: %v", err)
+		return "", nil, nil, fmt.Errorf("Hệ thống không thể xử lý yêu cầu, vui lòng thử lại sau")
 	}
 
 	// Giữ nguyên segments gốc từ Whisper để đảm bảo thời gian chính xác

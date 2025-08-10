@@ -67,7 +67,7 @@ func ConnectDatabase() {
 	sqlDB.SetConnMaxIdleTime(30 * time.Minute)
 
 	//Tự động migrate bảng (tạo bảng nếu chưa có)
-	//err = Db.AutoMigrate(&CaptionHistory{}, &Users{}, &UserTokens{}, &TokenTransaction{})
+	//err = Db.AutoMigrate(&CaptionHistory{}, &Users{}, &UserTokens{}, &CreditTransaction{}, &model.Feedback{})
 	//if err != nil {
 	//	log.Fatalf("Error migrating database: %v", err)
 	//}

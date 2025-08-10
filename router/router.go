@@ -1,8 +1,10 @@
 package router
 
 import (
+	"creator-tool-backend/config"
 	"creator-tool-backend/handler"
 	"creator-tool-backend/middleware"
+	"creator-tool-backend/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -10,6 +12,11 @@ import (
 func SetupRoutes(r *gin.Engine) {
 	// Add database middleware to all routes
 	r.Use(middleware.DatabaseMiddleware())
+
+	// Initialize services
+	db := config.Db
+	feedbackService := service.NewFeedbackService(db)
+	feedbackHandler := handler.NewFeedbackHandler(feedbackService)
 
 	// Public routes
 	r.POST("/register", handler.RegisterHandler)
@@ -76,6 +83,11 @@ func SetupRoutes(r *gin.Engine) {
 		protected.GET("/queue/job/:job_id/wait", handler.WaitForJobCompletion)
 		protected.POST("/queue/worker/start", handler.StartWorkerService)
 		protected.POST("/queue/worker/stop", handler.StopWorkerService)
+
+		// Feedback endpoints
+		protected.POST("/feedback", feedbackHandler.CreateFeedback)
+		protected.GET("/feedback", feedbackHandler.GetUserFeedbacks)
+		protected.GET("/feedback/:id", feedbackHandler.GetFeedbackByID)
 	}
 
 	// Payment routes
@@ -124,6 +136,10 @@ func SetupRoutes(r *gin.Engine) {
 			adminProtected.GET("/payments", handler.GetAdminPaymentOrders)
 			adminProtected.GET("/payments/stats", handler.GetAdminPaymentStats)
 			adminProtected.POST("/payments/:id/cancel", handler.CancelAdminPaymentOrder)
+
+			// Feedback management
+			adminProtected.GET("/feedbacks", feedbackHandler.GetAllFeedbacks)
+			adminProtected.PUT("/feedbacks/:id", feedbackHandler.UpdateFeedback)
 		}
 		admin.GET("/payment/email-logs", handler.GetPaymentEmailLogs)
 		admin.GET("/credit-usage", handler.AdminCreditUsageListHandler)

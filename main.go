@@ -55,6 +55,18 @@ func main() {
 	log.Println("Initializing process status service...")
 	processStatusService := service.NewProcessStatusService()
 
+	// Khởi tạo TTS Rate Limiter
+	log.Println("Initializing TTS rate limiter...")
+	err = service.InitTTSRateLimiter("localhost:6379", "")
+	if err != nil {
+		log.Printf("Warning: Failed to initialize TTS rate limiter: %v", err)
+		log.Println("TTS will continue without rate limiting")
+	}
+
+	// Khởi tạo TTS Mapping Service
+	log.Println("Initializing TTS mapping service...")
+	service.InitTTSMappingService()
+
 	// Chạy background cleanup routine
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute) // Cleanup mỗi 5 phút
@@ -97,7 +109,7 @@ func main() {
 
 	r := gin.Default()
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"https://inis-hvnh.site", "https://videotool.com.vn", "http://localhost:5173", "http://localhost:3000"},
+		AllowOrigins:     []string{"https://inis-hvnh.site", "https://videotool.com.vn", "http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Range", "If-Range"},
 		AllowCredentials: true,

@@ -410,8 +410,8 @@ func (p *ProcessVideoParallel) processTTS(translationResult *TranslationResult) 
 		log.Printf("Using target language for TTS: %s", ttsLanguage)
 	}
 
-	// Chuyển thành speech
-	ttsPath, err := ConvertSRTToSpeechWithLanguage(content, p.VideoDir, p.SpeakingRate, ttsLanguage)
+	// Sử dụng Optimized TTS Service thay vì TTS cũ
+	ttsPath, err := p.processTTSWithOptimizedService(content, ttsLanguage)
 	if err != nil {
 		return nil, err
 	}
@@ -451,6 +451,46 @@ func (p *ProcessVideoParallel) processVideo(ttsResult *TTSResult, backgroundResu
 		Transcript:        "",  // Sẽ được set sau
 		Segments:          nil, // Sẽ được set sau
 	}, nil
+}
+
+// processTTSWithOptimizedService xử lý TTS với Optimized TTS Service
+func (p *ProcessVideoParallel) processTTSWithOptimizedService(srtContent, targetLanguage string) (string, error) {
+	log.Printf("Processing TTS with Optimized TTS Service...")
+
+	// Khởi tạo Optimized TTS Service
+	ttsService, err := InitOptimizedTTSService("data/google_clound_tts_api.json", 15)
+	if err != nil {
+		log.Printf("Failed to initialize Optimized TTS Service, falling back to old TTS: %v", err)
+		// Fallback về TTS cũ nếu không thể khởi tạo service mới
+		return ConvertSRTToSpeechWithLanguage(srtContent, p.VideoDir, p.SpeakingRate, targetLanguage)
+	}
+
+	// Tạo job ID cho TTS processing
+	jobID := fmt.Sprintf("tts_%s_%d", filepath.Base(p.VideoDir), time.Now().UnixNano())
+
+	// Tạo options cho TTS
+	options := TTSProcessingOptions{
+		TargetLanguage:   targetLanguage,
+		ServiceName:      "gpt-4o-mini", // Default service
+		SubtitleColor:    p.SubtitleColor,
+		SubtitleBgColor:  p.SubtitleBgColor,
+		BackgroundVolume: p.BackgroundVolume,
+		TTSVolume:        p.TTSVolume,
+		SpeakingRate:     p.SpeakingRate,
+		MaxConcurrent:    15,
+		UserID:           0, // Không có user ID trong context này
+	}
+
+	// Xử lý TTS với concurrent processing
+	audioPath, err := ttsService.ProcessSRTConcurrent(srtContent, p.VideoDir, options, jobID)
+	if err != nil {
+		log.Printf("Optimized TTS failed, falling back to old TTS: %v", err)
+		// Fallback về TTS cũ nếu service mới thất bại
+		return ConvertSRTToSpeechWithLanguage(srtContent, p.VideoDir, p.SpeakingRate, targetLanguage)
+	}
+
+	log.Printf("Optimized TTS completed successfully: %s", audioPath)
+	return audioPath, nil
 }
 
 // Helper functions

@@ -357,14 +357,14 @@ func (p *ProcessVideoParallel) processTranslation(whisperResult *WhisperResult) 
 		return nil, fmt.Errorf("failed to get active SRT translation service: %v", err)
 	}
 
-	// Dịch SRT
+	// Dịch SRT với chunked translation
 	var translatedContent string
 	if strings.Contains(serviceName, "gpt") {
-		// Use GPT for translation
-		translatedContent, err = TranslateSRTFileWithGPT(whisperResult.SRTPath, p.APIKey, srtModelAPIName, p.TargetLanguage)
+		// Use GPT for translation with chunking
+		translatedContent, err = TranslateSRTWithChunkingWrapper(whisperResult.SRTPath, p.APIKey, srtModelAPIName, p.TargetLanguage)
 	} else {
-		// Use Gemini for translation (default)
-		translatedContent, err = TranslateSRTFile(whisperResult.SRTPath, p.GeminiKey, p.TargetLanguage, srtModelAPIName)
+		// Use Gemini for translation with chunking (default)
+		translatedContent, err = TranslateSRTWithChunkingWrapper(whisperResult.SRTPath, p.GeminiKey, srtModelAPIName, p.TargetLanguage)
 	}
 	if err != nil {
 		return nil, err

@@ -459,13 +459,13 @@ func ProcessVideoHandler(c *gin.Context) {
 			return
 		}
 
-		// Translate the original SRT file using the configured service (Gemini or GPT)
+		// Translate the original SRT file using the configured service (Gemini or GPT) with chunked translation
 		if strings.Contains(serviceName, "gpt") {
-			// Use GPT for translation
-			translatedSRTContent, err = service.TranslateSRTFileWithGPT(originalSRTPath, apiKey, srtModelAPIName, targetLanguage)
+			// Use GPT for translation with chunking
+			translatedSRTContent, err = service.TranslateSRTWithChunkingWrapper(originalSRTPath, apiKey, srtModelAPIName, targetLanguage)
 		} else {
-			// Use Gemini for translation (default)
-			translatedSRTContent, err = service.TranslateSRTFileWithModelAndLanguage(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
+			// Use Gemini for translation with chunking (default)
+			translatedSRTContent, err = service.TranslateSRTWithChunkingWrapper(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
 		}
 		if err != nil {
 			creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to translation error", nil)
@@ -1301,12 +1301,12 @@ func CreateSubtitleHandler(c *gin.Context) {
 			return
 		}
 
-		// Dịch SRT theo service được chọn
+		// Dịch SRT theo service được chọn với chunked translation
 		var translatedSRTContent string
 		if strings.Contains(serviceName, "gpt") {
-			translatedSRTContent, err = service.TranslateSRTFileWithGPT(originalSRTPath, apiKey, srtModelAPIName, targetLanguage)
+			translatedSRTContent, err = service.TranslateSRTWithChunkingWrapper(originalSRTPath, apiKey, srtModelAPIName, targetLanguage)
 		} else {
-			translatedSRTContent, err = service.TranslateSRTFileWithModelAndLanguage(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
+			translatedSRTContent, err = service.TranslateSRTWithChunkingWrapper(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
 		}
 		if err != nil {
 			creditService.UnlockCredits(userID, totalCost, "create-subtitle", "Unlock credits due to translation error", nil)

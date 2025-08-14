@@ -352,7 +352,9 @@ func (ws *WorkerService) runBurnSubtitle(job *AudioProcessingJob) (string, error
 
 // runProcessVideo xử lý video với parallel processing
 func (ws *WorkerService) runProcessVideo(job *AudioProcessingJob) (string, error) {
-	log.Printf("Running process video for job %s", job.ID)
+	log.Printf("🚀 [WORKER SERVICE] Bắt đầu xử lý process-video cho job %s", job.ID)
+	log.Printf("🔧 [WORKER SERVICE] Job config: user_id=%d, target_language=%s, has_custom_srt=%v",
+		job.UserID, job.TargetLanguage, job.HasCustomSrt)
 
 	// Lấy API keys từ config
 	configg := config.InfaConfig{}
@@ -360,6 +362,7 @@ func (ws *WorkerService) runProcessVideo(job *AudioProcessingJob) (string, error
 	apiKey := configg.ApiKey
 	geminiKey := configg.GeminiKey
 
+	log.Printf("⚡ [WORKER SERVICE] Khởi tạo ProcessVideoParallel processor...")
 	// Tạo task xử lý video với đầy đủ thông tin
 	videoPath := filepath.Join(job.VideoDir, job.FileName)
 	task := NewProcessVideoParallel(videoPath, job.AudioPath, job.VideoDir, job.TargetLanguage, apiKey, geminiKey)
@@ -373,11 +376,17 @@ func (ws *WorkerService) runProcessVideo(job *AudioProcessingJob) (string, error
 	task.TTSVolume = job.TTSVolume
 	task.SpeakingRate = job.SpeakingRate
 
+	log.Printf("🎬 [WORKER SERVICE] Bắt đầu parallel processing với ProcessParallel()...")
 	// Xử lý song song
 	result, err := task.ProcessParallel()
 	if err != nil {
+		log.Printf("❌ [WORKER SERVICE] Parallel processing failed: %v", err)
 		return "", fmt.Errorf("parallel processing failed: %v", err)
 	}
+
+	log.Printf("✅ [WORKER SERVICE] Parallel processing completed successfully!")
+	log.Printf("📊 [WORKER SERVICE] Results: srt=%s, tts=%s, video=%s",
+		result.TranslatedSRTPath, result.TTSPath, result.FinalVideoPath)
 
 	// Lưu lịch sử vào database
 	captionHistory := config.CaptionHistory{
@@ -393,7 +402,7 @@ func (ws *WorkerService) runProcessVideo(job *AudioProcessingJob) (string, error
 		CreatedAt:           time.Now(),
 	}
 	if err := config.Db.Create(&captionHistory).Error; err != nil {
-		log.Printf("Failed to save process-video history: %v", err)
+		log.Printf("⚠️ [WORKER SERVICE] Failed to save process-video history: %v", err)
 	}
 
 	// Cập nhật trạng thái process thành completed
@@ -401,6 +410,7 @@ func (ws *WorkerService) runProcessVideo(job *AudioProcessingJob) (string, error
 	processService.UpdateProcessStatus(job.ProcessID, "completed")
 	processService.UpdateProcessVideoID(job.ProcessID, captionHistory.ID)
 
+	log.Printf("🏁 [WORKER SERVICE] Process-video job %s hoàn thành thành công!", job.ID)
 	return result.FinalVideoPath, nil
 }
 

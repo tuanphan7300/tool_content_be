@@ -96,7 +96,7 @@ func (t *SRTChunkedTranslator) TranslateSRTWithChunking(
 	strategy *SRTChunkingStrategy,
 ) (*ChunkedTranslationResult, error) {
 	startTime := time.Now()
-	log.Printf("Starting chunked translation for %s", srtFilePath)
+	log.Printf("🚀 [CHUNKED TRANSLATION] Bắt đầu chunked translation cho %s", srtFilePath)
 
 	// Sử dụng strategy mặc định nếu không có
 	if strategy == nil {
@@ -122,19 +122,21 @@ func (t *SRTChunkedTranslator) TranslateSRTWithChunking(
 	}
 
 	totalEntries := len(entries)
-	log.Printf("Total SRT entries: %d", totalEntries)
+	log.Printf("📊 [CHUNKED TRANSLATION] Total SRT entries: %d", totalEntries)
 
 	// Nếu ít câu hơn chunk size, sử dụng translation cũ
 	if totalEntries <= strategy.MaxChunkSize {
-		log.Printf("SRT has only %d entries, using traditional translation", totalEntries)
+		log.Printf("⚠️ [CHUNKED TRANSLATION] SRT chỉ có %d entries (≤ %d), chuyển sang TRADITIONAL translation", totalEntries, strategy.MaxChunkSize)
 
 		// Tự động chọn service dựa trên modelName
 		var translatedContent string
 		var err error
 
 		if strings.Contains(strings.ToLower(modelName), "gpt") {
+			log.Printf("🔧 [TRADITIONAL] Sử dụng GPT API cho translation")
 			translatedContent, err = TranslateSRTWithGPT(srtFilePath, apiKey, modelName, targetLanguage)
 		} else {
+			log.Printf("🔧 [TRADITIONAL] Sử dụng Gemini API cho translation")
 			// Sử dụng Gemini
 			translatedContent, err = TranslateSRTFileWithModelAndLanguage(srtFilePath, apiKey, modelName, targetLanguage)
 		}
@@ -143,6 +145,7 @@ func (t *SRTChunkedTranslator) TranslateSRTWithChunking(
 			return nil, err
 		}
 
+		log.Printf("✅ [TRADITIONAL] Translation hoàn thành trong %v", time.Since(startTime))
 		return &ChunkedTranslationResult{
 			TranslatedContent: translatedContent,
 			ChunksProcessed:   1,
@@ -152,13 +155,15 @@ func (t *SRTChunkedTranslator) TranslateSRTWithChunking(
 		}, nil
 	}
 
+	log.Printf("🎯 [CHUNKED TRANSLATION] SRT có %d entries (> %d), sử dụng CHUNKED translation", totalEntries, strategy.MaxChunkSize)
+
 	// Chia SRT thành chunks
 	chunks, err := t.splitSRTIntoChunks(string(srtContent), strategy)
 	if err != nil {
 		return nil, fmt.Errorf("failed to split SRT into chunks: %v", err)
 	}
 
-	log.Printf("Split SRT into %d chunks", len(chunks))
+	log.Printf("✂️ [CHUNKED TRANSLATION] Đã chia SRT thành %d chunks", len(chunks))
 
 	// Xử lý chunks với concurrent processing
 	results, err := t.processChunksConcurrent(chunks, apiKey, modelName, targetLanguage, strategy)
@@ -174,12 +179,12 @@ func (t *SRTChunkedTranslator) TranslateSRTWithChunking(
 
 	// Validate kết quả cuối cùng
 	if err := t.validateFinalResult(mergedContent, totalEntries); err != nil {
-		log.Printf("Warning: Final result validation failed: %v", err)
+		log.Printf("⚠️ [CHUNKED TRANSLATION] Warning: Final result validation failed: %v", err)
 		// Không return error, chỉ log warning
 	}
 
 	processingTime := time.Since(startTime)
-	log.Printf("Chunked translation completed in %v", processingTime)
+	log.Printf("🏁 [CHUNKED TRANSLATION] Chunked translation hoàn thành trong %v", processingTime)
 
 	return &ChunkedTranslationResult{
 		TranslatedContent: mergedContent,
@@ -244,6 +249,10 @@ func (t *SRTChunkedTranslator) processChunksConcurrent(
 	apiKey, modelName, targetLanguage string,
 	strategy *SRTChunkingStrategy,
 ) ([]*SRTChunk, error) {
+	log.Printf("🚀 [CHUNKED TRANSLATION] Bắt đầu xử lý %d chunks với concurrent processing (max: %d)", len(chunks), strategy.MaxConcurrent)
+	log.Printf("🔧 [CHUNKED TRANSLATION] Strategy: chunk_size=%d, overlap=%d, concurrent=%d, timeout=%v",
+		strategy.MaxChunkSize, strategy.OverlapSize, strategy.MaxConcurrent, strategy.TimeoutPerChunk)
+
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, strategy.MaxConcurrent)
 	results := make([]*SRTChunk, len(chunks))
@@ -259,6 +268,8 @@ func (t *SRTChunkedTranslator) processChunksConcurrent(
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
 
+			log.Printf("🔄 [CHUNKED TRANSLATION] Worker bắt đầu xử lý chunk %d (index: %d)", chunk.ChunkID, index)
+
 			// Xử lý chunk với retry logic
 			result := t.processSingleChunkWithRetry(chunk, apiKey, modelName, targetLanguage, strategy)
 
@@ -266,10 +277,18 @@ func (t *SRTChunkedTranslator) processChunksConcurrent(
 			resultMutex.Lock()
 			results[index] = result
 			resultMutex.Unlock()
+
+			if result.Error != nil {
+				log.Printf("❌ [CHUNKED TRANSLATION] Chunk %d failed: %v", chunk.ChunkID, result.Error)
+			} else {
+				log.Printf("✅ [CHUNKED TRANSLATION] Chunk %d completed successfully", chunk.ChunkID)
+			}
 		}(chunk, chunk.ChunkID)
 	}
 
+	log.Printf("⏳ [CHUNKED TRANSLATION] Đang chờ tất cả %d workers hoàn thành...", len(chunks))
 	wg.Wait()
+	log.Printf("🎯 [CHUNKED TRANSLATION] Tất cả workers đã hoàn thành!")
 
 	// Kiểm tra lỗi
 	var failedChunks []int
@@ -280,14 +299,17 @@ func (t *SRTChunkedTranslator) processChunksConcurrent(
 	}
 
 	if len(failedChunks) > 0 {
-		log.Printf("Warning: %d chunks failed processing: %v", len(failedChunks), failedChunks)
+		log.Printf("⚠️ [CHUNKED TRANSLATION] %d chunks failed: %v", len(failedChunks), failedChunks)
 
 		// Thử retry với chunk size nhỏ hơn
+		log.Printf("🔄 [CHUNKED TRANSLATION] Thử retry failed chunks với chunk size nhỏ hơn...")
 		if err := t.retryFailedChunksWithSmallerSize(results, failedChunks, apiKey, modelName, targetLanguage, strategy); err != nil {
 			return nil, fmt.Errorf("failed to retry failed chunks: %v", err)
 		}
+		log.Printf("✅ [CHUNKED TRANSLATION] Retry completed")
 	}
 
+	log.Printf("🏁 [CHUNKED TRANSLATION] Concurrent processing hoàn thành cho %d chunks", len(chunks))
 	return results, nil
 }
 

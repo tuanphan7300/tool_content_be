@@ -112,7 +112,9 @@ func (s *OptimizedTTSService) ProcessSRTConcurrent(
 	jobID string,
 ) (string, error) {
 	startTime := time.Now()
-	log.Printf("Starting concurrent TTS processing for job %s", jobID)
+	log.Printf("🚀 [OPTIMIZED TTS] Bắt đầu concurrent TTS processing cho job %s", jobID)
+	log.Printf("🔧 [OPTIMIZED TTS] Config: max_concurrent=%d, target_language=%s, speaking_rate=%.2f",
+		options.MaxConcurrent, options.TargetLanguage, options.SpeakingRate)
 
 	// Parse SRT content
 	entries, err := parseSRT(srtContent)
@@ -124,6 +126,8 @@ func (s *OptimizedTTSService) ProcessSRTConcurrent(
 		return "", fmt.Errorf("no entries found in SRT content")
 	}
 
+	log.Printf("📊 [OPTIMIZED TTS] Đã parse được %d SRT entries", len(entries))
+
 	// Tạo mapping cho job
 	s.mappingService.CreateJobMapping(jobID, entries)
 
@@ -134,6 +138,7 @@ func (s *OptimizedTTSService) ProcessSRTConcurrent(
 	}
 	defer os.RemoveAll(tempDir)
 
+	log.Printf("⚡ [OPTIMIZED TTS] Khởi động %d concurrent workers để xử lý TTS...", len(entries))
 	// Xử lý TTS với concurrent workers
 	results := s.processTTSConcurrent(entries, tempDir, options, jobID)
 
@@ -146,9 +151,12 @@ func (s *OptimizedTTSService) ProcessSRTConcurrent(
 	}
 
 	if len(failedSegments) > 0 {
-		log.Printf("Warning: %d segments failed processing: %v", len(failedSegments), failedSegments)
+		log.Printf("⚠️ [OPTIMIZED TTS] %d segments failed processing: %v", len(failedSegments), failedSegments)
+	} else {
+		log.Printf("✅ [OPTIMIZED TTS] Tất cả %d segments đã được xử lý thành công!", len(entries))
 	}
 
+	log.Printf("🎵 [OPTIMIZED TTS] Bắt đầu tạo audio cuối cùng...")
 	// Tạo audio cuối cùng
 	outputPath := filepath.Join(videoDir, "tts_output.mp3")
 	err = s.createFinalAudio(results, entries, outputPath, tempDir)
@@ -157,7 +165,9 @@ func (s *OptimizedTTSService) ProcessSRTConcurrent(
 	}
 
 	totalTime := time.Since(startTime)
-	log.Printf("Concurrent TTS processing completed for job %s in %v", jobID, totalTime)
+	log.Printf("🏁 [OPTIMIZED TTS] Concurrent TTS processing hoàn thành cho job %s trong %v", jobID, totalTime)
+	log.Printf("📈 [OPTIMIZED TTS] Performance: %d segments / %v = %.2f segments/second",
+		len(entries), totalTime, float64(len(entries))/totalTime.Seconds())
 
 	return outputPath, nil
 }
@@ -169,6 +179,8 @@ func (s *OptimizedTTSService) processTTSConcurrent(
 	options TTSProcessingOptions,
 	jobID string,
 ) []*TTSProcessingResult {
+	log.Printf("🔄 [OPTIMIZED TTS] Bắt đầu concurrent processing với %d workers (pool size: %d)", len(entries), s.maxConcurrent)
+
 	results := make([]*TTSProcessingResult, len(entries))
 	var wg sync.WaitGroup
 	var resultMutex sync.Mutex
@@ -179,9 +191,13 @@ func (s *OptimizedTTSService) processTTSConcurrent(
 		go func(entry SRTEntry, index int) {
 			defer wg.Done()
 
+			log.Printf("🎯 [OPTIMIZED TTS] Worker %d bắt đầu xử lý segment %d: '%s'", index, index, truncateText(entry.Text, 50))
+
 			// Acquire worker slot
 			s.workerPool <- struct{}{}
 			defer func() { <-s.workerPool }()
+
+			log.Printf("⚡ [OPTIMIZED TTS] Worker %d đã acquire slot, bắt đầu xử lý TTS...", index)
 
 			// Xử lý TTS cho segment này
 			result := s.processSingleSegment(entry, index, tempDir, options, jobID)
@@ -190,10 +206,19 @@ func (s *OptimizedTTSService) processTTSConcurrent(
 			resultMutex.Lock()
 			results[index] = result
 			resultMutex.Unlock()
+
+			if result.Error != nil {
+				log.Printf("❌ [OPTIMIZED TTS] Worker %d failed: %v", index, result.Error)
+			} else {
+				log.Printf("✅ [OPTIMIZED TTS] Worker %d completed trong %v", index, result.ProcessingTime)
+			}
 		}(entries[i], i)
 	}
 
+	log.Printf("⏳ [OPTIMIZED TTS] Đang chờ tất cả %d workers hoàn thành...", len(entries))
 	wg.Wait()
+	log.Printf("🎯 [OPTIMIZED TTS] Tất cả workers đã hoàn thành!")
+
 	return results
 }
 
@@ -451,4 +476,12 @@ func (s *OptimizedTTSService) GetServiceStatistics() map[string]interface{} {
 	stats["active_workers"] = len(s.workerPool)
 
 	return stats
+}
+
+// truncateText helper function để truncate text dài
+func truncateText(text string, maxLength int) string {
+	if len(text) <= maxLength {
+		return text
+	}
+	return text[:maxLength] + "..."
 }

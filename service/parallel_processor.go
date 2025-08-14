@@ -126,12 +126,14 @@ func NewProcessVideoParallel(videoPath, audioPath, videoDir, targetLanguage, api
 
 // ProcessParallel xử lý song song
 func (p *ProcessVideoParallel) ProcessParallel() (*ProcessVideoResult, error) {
-	log.Printf("Starting parallel video processing...")
+	log.Printf("🚀 [PARALLEL PROCESSING] Bắt đầu parallel video processing...")
 	startTime := time.Now()
 
 	// Khởi tạo các tác vụ
 	p.Processor.AddTask("whisper", "speech_to_text")
 	p.Processor.AddTask("background", "audio_separation")
+
+	log.Printf("🔧 [PARALLEL PROCESSING] Đã khởi tạo tasks: whisper + background extraction")
 
 	// Bước 1: Xử lý song song Whisper và Background extraction
 	var wg sync.WaitGroup
@@ -139,15 +141,20 @@ func (p *ProcessVideoParallel) ProcessParallel() (*ProcessVideoResult, error) {
 	var backgroundResult *BackgroundResult
 	var whisperErr, backgroundErr error
 
+	log.Printf("⚡ [PARALLEL PROCESSING] Khởi động 2 goroutines chạy song song...")
+
 	// Whisper processing
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		log.Printf("🎤 [PARALLEL-WHISPER] Worker bắt đầu xử lý Whisper...")
 		p.Processor.UpdateTaskProgress("whisper", 10, "running")
 		whisperResult, whisperErr = p.processWhisper()
 		if whisperErr != nil {
+			log.Printf("❌ [PARALLEL-WHISPER] Whisper failed: %v", whisperErr)
 			p.Processor.UpdateTaskProgress("whisper", 0, "failed")
 		} else {
+			log.Printf("✅ [PARALLEL-WHISPER] Whisper completed successfully")
 			p.Processor.UpdateTaskProgress("whisper", 100, "completed")
 		}
 	}()
@@ -156,29 +163,35 @@ func (p *ProcessVideoParallel) ProcessParallel() (*ProcessVideoResult, error) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		log.Printf("🎵 [PARALLEL-BACKGROUND] Worker bắt đầu xử lý background extraction...")
 		p.Processor.UpdateTaskProgress("background", 10, "running")
 		backgroundResult, backgroundErr = p.processBackground()
 		if backgroundErr != nil {
+			log.Printf("❌ [PARALLEL-BACKGROUND] Background extraction failed: %v", backgroundErr)
 			p.Processor.UpdateTaskProgress("background", 0, "failed")
 		} else {
+			log.Printf("✅ [PARALLEL-BACKGROUND] Background extraction completed successfully")
 			p.Processor.UpdateTaskProgress("background", 100, "completed")
 		}
 	}()
 
+	log.Printf("⏳ [PARALLEL PROCESSING] Đang chờ 2 goroutines hoàn thành...")
 	wg.Wait()
+	log.Printf("🎯 [PARALLEL PROCESSING] Cả 2 goroutines đã hoàn thành!")
 
 	// Kiểm tra lỗi
 	if whisperErr != nil {
 		return nil, fmt.Errorf("whisper processing failed: %v", whisperErr)
 	}
 	if backgroundErr != nil {
-		log.Printf("Background extraction failed, using fallback: %v", backgroundErr)
+		log.Printf("⚠️ [PARALLEL PROCESSING] Background extraction failed, sử dụng fallback: %v", backgroundErr)
 		// Sử dụng fallback
 		backgroundResult = &BackgroundResult{
 			Path: p.AudioPath, // Sử dụng audio gốc
 		}
 	}
 
+	log.Printf("🔤 [PARALLEL PROCESSING] Bước 2: Bắt đầu translation (phụ thuộc vào Whisper)...")
 	// Bước 2: Translation (phụ thuộc vào Whisper)
 	p.Processor.AddTask("translation", "srt_translation")
 	p.Processor.UpdateTaskProgress("translation", 10, "running")
@@ -189,34 +202,42 @@ func (p *ProcessVideoParallel) ProcessParallel() (*ProcessVideoResult, error) {
 		return nil, fmt.Errorf("Lỗi dịch thuật: %v", err)
 	}
 	p.Processor.UpdateTaskProgress("translation", 100, "completed")
+	log.Printf("✅ [PARALLEL PROCESSING] Translation completed successfully")
 
-	// Bước 3: TTS (phụ thuộc vào Translation)
+	log.Printf("🎙️ [PARALLEL PROCESSING] Bước 3: Bắt đầu TTS processing...")
+	// Bước 3: TTS
 	p.Processor.AddTask("tts", "text_to_speech")
 	p.Processor.UpdateTaskProgress("tts", 10, "running")
 
 	ttsResult, err := p.processTTS(translationResult)
 	if err != nil {
 		p.Processor.UpdateTaskProgress("tts", 0, "failed")
-		return nil, fmt.Errorf("TTS failed: %v", err)
+		return nil, fmt.Errorf("Lỗi TTS: %v", err)
 	}
 	p.Processor.UpdateTaskProgress("tts", 100, "completed")
+	log.Printf("✅ [PARALLEL PROCESSING] TTS completed successfully")
 
-	// Bước 4: Video processing (phụ thuộc vào TTS và Background)
+	log.Printf("🎬 [PARALLEL PROCESSING] Bước 4: Bắt đầu video processing...")
+	// Bước 4: Video processing
 	p.Processor.AddTask("video", "video_processing")
 	p.Processor.UpdateTaskProgress("video", 10, "running")
 
 	videoResult, err := p.processVideo(ttsResult, backgroundResult, translationResult)
 	if err != nil {
 		p.Processor.UpdateTaskProgress("video", 0, "failed")
-		return nil, fmt.Errorf("video processing failed: %v", err)
+		return nil, fmt.Errorf("Lỗi video processing: %v", err)
 	}
 	p.Processor.UpdateTaskProgress("video", 100, "completed")
+	log.Printf("✅ [PARALLEL PROCESSING] Video processing completed successfully")
+
+	processingTime := time.Since(startTime)
+	log.Printf("🏁 [PARALLEL PROCESSING] Tất cả parallel processing hoàn thành trong %v", processingTime)
 
 	// Set thông tin bổ sung
 	videoResult.OriginalSRTPath = whisperResult.SRTPath
 	videoResult.Transcript = whisperResult.Transcript
 	videoResult.Segments = whisperResult.Segments
-	videoResult.ProcessingTime = time.Since(startTime)
+	videoResult.ProcessingTime = processingTime
 
 	return videoResult, nil
 }

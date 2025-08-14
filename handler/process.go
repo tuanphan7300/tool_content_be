@@ -459,13 +459,13 @@ func ProcessVideoHandler(c *gin.Context) {
 			return
 		}
 
-		// Translate the original SRT file using the configured service (Gemini or GPT)
+		// Translate the original SRT file using the configured service (Gemini or GPT) with chunked translation
 		if strings.Contains(serviceName, "gpt") {
-			// Use GPT for translation
-			translatedSRTContent, err = service.TranslateSRTFileWithGPT(originalSRTPath, apiKey, srtModelAPIName, targetLanguage)
+			// Use GPT for translation with chunking
+			translatedSRTContent, err = service.TranslateSRTWithChunkingWrapper(originalSRTPath, apiKey, srtModelAPIName, targetLanguage)
 		} else {
-			// Use Gemini for translation (default)
-			translatedSRTContent, err = service.TranslateSRTFileWithModelAndLanguage(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
+			// Use Gemini for translation with chunking (default)
+			translatedSRTContent, err = service.TranslateSRTWithChunkingWrapper(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
 		}
 		if err != nil {
 			creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to translation error", nil)
@@ -1301,12 +1301,12 @@ func CreateSubtitleHandler(c *gin.Context) {
 			return
 		}
 
-		// Dịch SRT theo service được chọn
+		// Dịch SRT theo service được chọn với chunked translation
 		var translatedSRTContent string
 		if strings.Contains(serviceName, "gpt") {
-			translatedSRTContent, err = service.TranslateSRTFileWithGPT(originalSRTPath, apiKey, srtModelAPIName, targetLanguage)
+			translatedSRTContent, err = service.TranslateSRTWithChunkingWrapper(originalSRTPath, apiKey, srtModelAPIName, targetLanguage)
 		} else {
-			translatedSRTContent, err = service.TranslateSRTFileWithModelAndLanguage(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
+			translatedSRTContent, err = service.TranslateSRTWithChunkingWrapper(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
 		}
 		if err != nil {
 			creditService.UnlockCredits(userID, totalCost, "create-subtitle", "Unlock credits due to translation error", nil)
@@ -1891,38 +1891,22 @@ func ProcessVideoAsyncHandler(c *gin.Context) {
 		}
 	}
 
-	// Tạo thư mục lưu file
-	timestamp := time.Now().UnixNano()
-	baseName := strings.TrimSuffix(filepath.Base(videoFile.Filename), filepath.Ext(videoFile.Filename))
-	uniqueName := fmt.Sprintf("%d_%s%s", timestamp, baseName, filepath.Ext(videoFile.Filename))
-	videoDir := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName)))
-	if err := os.MkdirAll(videoDir, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create video directory"})
+	// Tái sử dụng thư mục và file từ middleware
+	tempDir := c.GetString("temp_dir")
+	tempVideoPath := c.GetString("temp_video_path")
+	tempAudioPath := c.GetString("temp_audio_path")
+
+	if tempDir == "" || tempVideoPath == "" || tempAudioPath == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "File validation failed"})
 		return
 	}
 
-	// Lưu file video
+	// Sử dụng thư mục từ middleware làm videoDir chính
+	videoDir := tempDir
+	audioPath := tempAudioPath
+
+	// Lấy tên file an toàn
 	safeVideoName := strings.ReplaceAll(videoFile.Filename, " ", "_")
-	videoPath := filepath.Join(videoDir, safeVideoName)
-	if err := c.SaveUploadedFile(videoFile, videoPath); err != nil {
-		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save video file"})
-		return
-	}
-
-	// Kiểm tra duration
-	audioPath, err := util.ProcessfileToDir(c, videoFile, videoDir)
-	if err != nil {
-		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract audio"})
-		return
-	}
-	duration, _ := util.GetAudioDuration(audioPath)
-	if duration > 420 {
-		util.CleanupDir(videoDir)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 7 phút."})
-		return
-	}
 
 	// Tính toán chi phí ước tính
 	creditService := service.NewCreditService()
@@ -1961,7 +1945,7 @@ func ProcessVideoAsyncHandler(c *gin.Context) {
 	}
 
 	// Tạo job process-video và enqueue vào queue
-	jobID := fmt.Sprintf("processvideo_%d_%d", userID, timestamp)
+	jobID := fmt.Sprintf("processvideo_%d_%d", userID, time.Now().UnixNano())
 	job := &service.AudioProcessingJob{
 		ID:               jobID,
 		JobType:          "process-video",

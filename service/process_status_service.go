@@ -2,6 +2,7 @@ package service
 
 import (
 	"creator-tool-backend/config"
+	"path/filepath"
 	"time"
 
 	"os"
@@ -132,18 +133,33 @@ func (s *ProcessStatusService) GetUserActiveProcesses(userID uint) ([]config.Use
 
 // DeleteCaptionHistoryAndFiles xóa record CaptionHistory và tất cả file vật lý liên quan
 func (s *ProcessStatusService) DeleteCaptionHistoryAndFiles(history *config.CaptionHistory) error {
-	deleteFile := func(path string) {
-		if path != "" {
-			_ = os.Remove(path)
-		}
+	//deleteFile := func(path string) {
+	//	if path != "" {
+	//		_ = os.Remove(path)
+	//	}
+	//}
+	//deleteFile(history.VideoFilename)
+	//deleteFile(history.SrtFile)
+	//deleteFile(history.OriginalSrtFile)
+	//deleteFile(history.TTSFile)
+	//deleteFile(history.MergedVideoFile)
+	//deleteFile(history.BackgroundMusic)
+	//// Có thể xóa thêm các file khác nếu cần
+	//return config.Db.Delete(history).Error
+	var videoDir string
+	if history.VideoFilename != "" {
+		videoDir = filepath.Dir(history.VideoFilename)
+	} else if history.MergedVideoFile != "" {
+		videoDir = filepath.Dir(history.MergedVideoFile)
+	} else if history.SrtFile != "" {
+		videoDir = filepath.Dir(history.SrtFile)
 	}
-	deleteFile(history.VideoFilename)
-	deleteFile(history.SrtFile)
-	deleteFile(history.OriginalSrtFile)
-	deleteFile(history.TTSFile)
-	deleteFile(history.MergedVideoFile)
-	deleteFile(history.BackgroundMusic)
-	// Có thể xóa thêm các file khác nếu cần
+
+	// Xóa toàn bộ thư mục
+	if videoDir != "" && videoDir != "." && videoDir != "/" {
+		_ = os.RemoveAll(videoDir)
+	}
+
 	return config.Db.Delete(history).Error
 }
 

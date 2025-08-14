@@ -126,12 +126,14 @@ func NewProcessVideoParallel(videoPath, audioPath, videoDir, targetLanguage, api
 
 // ProcessParallel xử lý song song
 func (p *ProcessVideoParallel) ProcessParallel() (*ProcessVideoResult, error) {
-	log.Printf("Starting parallel video processing...")
+	log.Printf("🚀 [PARALLEL PROCESSING] Bắt đầu parallel video processing...")
 	startTime := time.Now()
 
 	// Khởi tạo các tác vụ
 	p.Processor.AddTask("whisper", "speech_to_text")
 	p.Processor.AddTask("background", "audio_separation")
+
+	log.Printf("🔧 [PARALLEL PROCESSING] Đã khởi tạo tasks: whisper + background extraction")
 
 	// Bước 1: Xử lý song song Whisper và Background extraction
 	var wg sync.WaitGroup
@@ -139,15 +141,20 @@ func (p *ProcessVideoParallel) ProcessParallel() (*ProcessVideoResult, error) {
 	var backgroundResult *BackgroundResult
 	var whisperErr, backgroundErr error
 
+	log.Printf("⚡ [PARALLEL PROCESSING] Khởi động 2 goroutines chạy song song...")
+
 	// Whisper processing
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		log.Printf("🎤 [PARALLEL-WHISPER] Worker bắt đầu xử lý Whisper...")
 		p.Processor.UpdateTaskProgress("whisper", 10, "running")
 		whisperResult, whisperErr = p.processWhisper()
 		if whisperErr != nil {
+			log.Printf("❌ [PARALLEL-WHISPER] Whisper failed: %v", whisperErr)
 			p.Processor.UpdateTaskProgress("whisper", 0, "failed")
 		} else {
+			log.Printf("✅ [PARALLEL-WHISPER] Whisper completed successfully")
 			p.Processor.UpdateTaskProgress("whisper", 100, "completed")
 		}
 	}()
@@ -156,29 +163,35 @@ func (p *ProcessVideoParallel) ProcessParallel() (*ProcessVideoResult, error) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		log.Printf("🎵 [PARALLEL-BACKGROUND] Worker bắt đầu xử lý background extraction...")
 		p.Processor.UpdateTaskProgress("background", 10, "running")
 		backgroundResult, backgroundErr = p.processBackground()
 		if backgroundErr != nil {
+			log.Printf("❌ [PARALLEL-BACKGROUND] Background extraction failed: %v", backgroundErr)
 			p.Processor.UpdateTaskProgress("background", 0, "failed")
 		} else {
+			log.Printf("✅ [PARALLEL-BACKGROUND] Background extraction completed successfully")
 			p.Processor.UpdateTaskProgress("background", 100, "completed")
 		}
 	}()
 
+	log.Printf("⏳ [PARALLEL PROCESSING] Đang chờ 2 goroutines hoàn thành...")
 	wg.Wait()
+	log.Printf("🎯 [PARALLEL PROCESSING] Cả 2 goroutines đã hoàn thành!")
 
 	// Kiểm tra lỗi
 	if whisperErr != nil {
 		return nil, fmt.Errorf("whisper processing failed: %v", whisperErr)
 	}
 	if backgroundErr != nil {
-		log.Printf("Background extraction failed, using fallback: %v", backgroundErr)
+		log.Printf("⚠️ [PARALLEL PROCESSING] Background extraction failed, sử dụng fallback: %v", backgroundErr)
 		// Sử dụng fallback
 		backgroundResult = &BackgroundResult{
 			Path: p.AudioPath, // Sử dụng audio gốc
 		}
 	}
 
+	log.Printf("🔤 [PARALLEL PROCESSING] Bước 2: Bắt đầu translation (phụ thuộc vào Whisper)...")
 	// Bước 2: Translation (phụ thuộc vào Whisper)
 	p.Processor.AddTask("translation", "srt_translation")
 	p.Processor.UpdateTaskProgress("translation", 10, "running")
@@ -189,34 +202,42 @@ func (p *ProcessVideoParallel) ProcessParallel() (*ProcessVideoResult, error) {
 		return nil, fmt.Errorf("lỗi dịch thuật: %v", err)
 	}
 	p.Processor.UpdateTaskProgress("translation", 100, "completed")
+	log.Printf("✅ [PARALLEL PROCESSING] Translation completed successfully")
 
-	// Bước 3: TTS (phụ thuộc vào Translation)
+	log.Printf("🎙️ [PARALLEL PROCESSING] Bước 3: Bắt đầu TTS processing...")
+	// Bước 3: TTS
 	p.Processor.AddTask("tts", "text_to_speech")
 	p.Processor.UpdateTaskProgress("tts", 10, "running")
 
 	ttsResult, err := p.processTTS(translationResult)
 	if err != nil {
 		p.Processor.UpdateTaskProgress("tts", 0, "failed")
-		return nil, fmt.Errorf("TTS failed: %v", err)
+		return nil, fmt.Errorf("Lỗi TTS: %v", err)
 	}
 	p.Processor.UpdateTaskProgress("tts", 100, "completed")
+	log.Printf("✅ [PARALLEL PROCESSING] TTS completed successfully")
 
-	// Bước 4: Video processing (phụ thuộc vào TTS và Background)
+	log.Printf("🎬 [PARALLEL PROCESSING] Bước 4: Bắt đầu video processing...")
+	// Bước 4: Video processing
 	p.Processor.AddTask("video", "video_processing")
 	p.Processor.UpdateTaskProgress("video", 10, "running")
 
 	videoResult, err := p.processVideo(ttsResult, backgroundResult, translationResult)
 	if err != nil {
 		p.Processor.UpdateTaskProgress("video", 0, "failed")
-		return nil, fmt.Errorf("video processing failed: %v", err)
+		return nil, fmt.Errorf("Lỗi video processing: %v", err)
 	}
 	p.Processor.UpdateTaskProgress("video", 100, "completed")
+	log.Printf("✅ [PARALLEL PROCESSING] Video processing completed successfully")
+
+	processingTime := time.Since(startTime)
+	log.Printf("🏁 [PARALLEL PROCESSING] Tất cả parallel processing hoàn thành trong %v", processingTime)
 
 	// Set thông tin bổ sung
 	videoResult.OriginalSRTPath = whisperResult.SRTPath
 	videoResult.Transcript = whisperResult.Transcript
 	videoResult.Segments = whisperResult.Segments
-	videoResult.ProcessingTime = time.Since(startTime)
+	videoResult.ProcessingTime = processingTime
 
 	return videoResult, nil
 }
@@ -357,14 +378,14 @@ func (p *ProcessVideoParallel) processTranslation(whisperResult *WhisperResult) 
 		return nil, fmt.Errorf("failed to get active SRT translation service: %v", err)
 	}
 
-	// Dịch SRT
+	// Dịch SRT với chunked translation
 	var translatedContent string
 	if strings.Contains(serviceName, "gpt") {
-		// Use GPT for translation
-		translatedContent, err = TranslateSRTFileWithGPT(whisperResult.SRTPath, p.APIKey, srtModelAPIName, p.TargetLanguage)
+		// Use GPT for translation with chunking
+		translatedContent, err = TranslateSRTWithChunkingWrapper(whisperResult.SRTPath, p.APIKey, srtModelAPIName, p.TargetLanguage)
 	} else {
-		// Use Gemini for translation (default)
-		translatedContent, err = TranslateSRTFile(whisperResult.SRTPath, p.GeminiKey, p.TargetLanguage, srtModelAPIName)
+		// Use Gemini for translation with chunking (default)
+		translatedContent, err = TranslateSRTWithChunkingWrapper(whisperResult.SRTPath, p.GeminiKey, srtModelAPIName, p.TargetLanguage)
 	}
 	if err != nil {
 		return nil, err
@@ -410,8 +431,8 @@ func (p *ProcessVideoParallel) processTTS(translationResult *TranslationResult) 
 		log.Printf("Using target language for TTS: %s", ttsLanguage)
 	}
 
-	// Chuyển thành speech
-	ttsPath, err := ConvertSRTToSpeechWithLanguage(content, p.VideoDir, p.SpeakingRate, ttsLanguage)
+	// Sử dụng Optimized TTS Service thay vì TTS cũ
+	ttsPath, err := p.processTTSWithOptimizedService(content, ttsLanguage)
 	if err != nil {
 		return nil, err
 	}
@@ -473,6 +494,46 @@ func (p *ProcessVideoParallel) processVideo(ttsResult *TTSResult, backgroundResu
 		Transcript:        "",  // Sẽ được set sau
 		Segments:          nil, // Sẽ được set sau
 	}, nil
+}
+
+// processTTSWithOptimizedService xử lý TTS với Optimized TTS Service
+func (p *ProcessVideoParallel) processTTSWithOptimizedService(srtContent, targetLanguage string) (string, error) {
+	log.Printf("Processing TTS with Optimized TTS Service...")
+
+	// Khởi tạo Optimized TTS Service
+	ttsService, err := InitOptimizedTTSService("data/google_clound_tts_api.json", 15)
+	if err != nil {
+		log.Printf("Failed to initialize Optimized TTS Service, falling back to old TTS: %v", err)
+		// Fallback về TTS cũ nếu không thể khởi tạo service mới
+		return ConvertSRTToSpeechWithLanguage(srtContent, p.VideoDir, p.SpeakingRate, targetLanguage)
+	}
+
+	// Tạo job ID cho TTS processing
+	jobID := fmt.Sprintf("tts_%s_%d", filepath.Base(p.VideoDir), time.Now().UnixNano())
+
+	// Tạo options cho TTS
+	options := TTSProcessingOptions{
+		TargetLanguage:   targetLanguage,
+		ServiceName:      "gpt-4o-mini", // Default service
+		SubtitleColor:    p.SubtitleColor,
+		SubtitleBgColor:  p.SubtitleBgColor,
+		BackgroundVolume: p.BackgroundVolume,
+		TTSVolume:        p.TTSVolume,
+		SpeakingRate:     p.SpeakingRate,
+		MaxConcurrent:    15,
+		UserID:           0, // Không có user ID trong context này
+	}
+
+	// Xử lý TTS với concurrent processing
+	audioPath, err := ttsService.ProcessSRTConcurrent(srtContent, p.VideoDir, options, jobID)
+	if err != nil {
+		log.Printf("Optimized TTS failed, falling back to old TTS: %v", err)
+		// Fallback về TTS cũ nếu service mới thất bại
+		return ConvertSRTToSpeechWithLanguage(srtContent, p.VideoDir, p.SpeakingRate, targetLanguage)
+	}
+
+	log.Printf("Optimized TTS completed successfully: %s", audioPath)
+	return audioPath, nil
 }
 
 // Helper functions

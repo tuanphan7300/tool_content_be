@@ -63,6 +63,13 @@ func SetupRoutes(r *gin.Engine) {
 		protected.DELETE("/cache/all", handler.ClearAllCacheHandler)
 		protected.PUT("/cache/entry/:key/ttl", handler.SetCacheTTLHandler)
 		protected.POST("/text-to-speech", handler.TextToSpeechHandler)
+
+		// Optimized TTS endpoints
+		protected.POST("/optimized-tts", handler.OptimizedTTSHandler)
+		protected.GET("/optimized-tts/:job_id/progress", handler.GetOptimizedTTSProgress)
+		protected.GET("/optimized-tts/:job_id/result", handler.GetOptimizedTTSResult)
+		protected.DELETE("/optimized-tts/:job_id", handler.CancelOptimizedTTSJob)
+		protected.GET("/optimized-tts/stats", handler.GetOptimizedTTSStatistics)
 		protected.POST("/burn-sub", middleware.FileValidationMiddleware(), middleware.ProcessAnyStatusMiddleware(), middleware.ProcessStatusMiddleware("burn-sub"), handler.BurnSubHandler)
 		protected.POST("/create-subtitle", middleware.FileValidationMiddleware(), middleware.ProcessAnyStatusMiddleware(), middleware.ProcessStatusMiddleware("create-subtitle"), handler.CreateSubtitleHandler)
 

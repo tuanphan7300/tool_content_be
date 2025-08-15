@@ -2,17 +2,21 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"creator-tool-backend/config"
+
+	"gorm.io/datatypes"
 )
 
 type WorkerService struct {
@@ -328,6 +332,9 @@ func (ws *WorkerService) runBurnSubtitle(job *AudioProcessingJob) (string, error
 		return "", fmt.Errorf("failed to burn subtitle: %v, output: %s", err, string(output))
 	}
 
+	// Lấy duration của video để lưu vào database
+	videoDuration := getAudioDuration(videoPath)
+
 	// Lưu lịch sử vào database
 	captionHistory := config.CaptionHistory{
 		UserID:              job.UserID,
@@ -336,6 +343,7 @@ func (ws *WorkerService) runBurnSubtitle(job *AudioProcessingJob) (string, error
 		SrtFile:             job.SubtitlePath,
 		MergedVideoFile:     outputPath,
 		ProcessType:         "burn-sub",
+		VideoDuration:       videoDuration,
 		CreatedAt:           time.Now(),
 	}
 	if err := config.Db.Create(&captionHistory).Error; err != nil {
@@ -352,7 +360,9 @@ func (ws *WorkerService) runBurnSubtitle(job *AudioProcessingJob) (string, error
 
 // runProcessVideo xử lý video với parallel processing
 func (ws *WorkerService) runProcessVideo(job *AudioProcessingJob) (string, error) {
-	log.Printf("Running process video for job %s", job.ID)
+	log.Printf("🚀 [WORKER SERVICE] Bắt đầu xử lý process-video cho job %s", job.ID)
+	log.Printf("🔧 [WORKER SERVICE] Job config: user_id=%d, target_language=%s, has_custom_srt=%v",
+		job.UserID, job.TargetLanguage, job.HasCustomSrt)
 
 	// Lấy API keys từ config
 	configg := config.InfaConfig{}
@@ -360,6 +370,7 @@ func (ws *WorkerService) runProcessVideo(job *AudioProcessingJob) (string, error
 	apiKey := configg.ApiKey
 	geminiKey := configg.GeminiKey
 
+	log.Printf("⚡ [WORKER SERVICE] Khởi tạo ProcessVideoParallel processor...")
 	// Tạo task xử lý video với đầy đủ thông tin
 	videoPath := filepath.Join(job.VideoDir, job.FileName)
 	task := NewProcessVideoParallel(videoPath, job.AudioPath, job.VideoDir, job.TargetLanguage, apiKey, geminiKey)
@@ -373,27 +384,119 @@ func (ws *WorkerService) runProcessVideo(job *AudioProcessingJob) (string, error
 	task.TTSVolume = job.TTSVolume
 	task.SpeakingRate = job.SpeakingRate
 
+	log.Printf("🎬 [WORKER SERVICE] Bắt đầu parallel processing với ProcessParallel()...")
 	// Xử lý song song
 	result, err := task.ProcessParallel()
 	if err != nil {
+		log.Printf("❌ [WORKER SERVICE] Parallel processing failed: %v", err)
 		return "", fmt.Errorf("parallel processing failed: %v", err)
 	}
 
+	log.Printf("✅ [WORKER SERVICE] Parallel processing completed successfully!")
+	log.Printf("📊 [WORKER SERVICE] Results: srt=%s, tts=%s, video=%s",
+		result.TranslatedSRTPath, result.TTSPath, result.FinalVideoPath)
+
+	// Tính duration để tính chi phí và lưu vào database
+	duration := getAudioDuration(job.AudioPath)
+	durationMinutes := duration / 60.0
+
 	// Lưu lịch sử vào database
+	segmentsJSON, _ := json.Marshal(result.Segments)
+
 	captionHistory := config.CaptionHistory{
 		UserID:              job.UserID,
 		VideoFilename:       filepath.Join(job.VideoDir, job.FileName),
 		VideoFilenameOrigin: job.FileName,
+		Transcript:          result.Transcript,
+		Segments:            datatypes.JSON(segmentsJSON),
+		SegmentsVi:          datatypes.JSON(segmentsJSON), // Sử dụng segments gốc cho segments_vi
 		SrtFile:             result.TranslatedSRTPath,
 		OriginalSrtFile:     result.OriginalSRTPath,
 		TTSFile:             result.TTSPath,
 		MergedVideoFile:     result.FinalVideoPath,
 		BackgroundMusic:     result.BackgroundPath,
 		ProcessType:         "process-video",
+		VideoDuration:       duration,
 		CreatedAt:           time.Now(),
 	}
 	if err := config.Db.Create(&captionHistory).Error; err != nil {
-		log.Printf("Failed to save process-video history: %v", err)
+		log.Printf("⚠️ [WORKER SERVICE] Failed to save process-video history: %v", err)
+		return "", fmt.Errorf("failed to save to database: %v", err)
+	}
+
+	// Xử lý credit deduction giống như trong ProcessVideoParallelHandler
+	creditService := NewCreditService()
+	pricingService := NewPricingService()
+
+	// 1) Whisper (per_minute)
+	whisperBase, err := pricingService.CalculateWhisperCost(durationMinutes)
+	if err != nil {
+		log.Printf("⚠️ [WORKER SERVICE] Failed to calculate Whisper cost: %v", err)
+	} else {
+		if err := creditService.DeductCredits(job.UserID, whisperBase, "whisper", "Whisper transcribe", &captionHistory.ID, "per_minute", durationMinutes); err != nil {
+			log.Printf("⚠️ [WORKER SERVICE] Failed to deduct Whisper credits: %v", err)
+		} else {
+			log.Printf("✅ [WORKER SERVICE] Deducted %.6f credits for Whisper", whisperBase)
+		}
+	}
+
+	// 2) Translation (Gemini/GPT) per_token
+	serviceName, _, err := pricingService.GetActiveServiceForType("srt_translation")
+	if err != nil {
+		log.Printf("⚠️ [WORKER SERVICE] Failed to get translation service: %v", err)
+	} else {
+		// Tính chi phí dịch theo input/output riêng
+		var inputText, outputText string
+		if result.OriginalSRTPath != "" {
+			if b, e := os.ReadFile(result.OriginalSRTPath); e == nil {
+				inputText = string(b)
+			}
+		}
+		if result.TranslatedSRTPath != "" {
+			if b, e := os.ReadFile(result.TranslatedSRTPath); e == nil {
+				outputText = string(b)
+			}
+		}
+		if inputText == "" {
+			inputText = result.Transcript
+		}
+		if outputText == "" {
+			outputText = result.Transcript
+		}
+
+		inCost, outCost, inTok, outTok, _, err := pricingService.CalculateLLMCostSplit(inputText, outputText, serviceName)
+		if err != nil {
+			log.Printf("⚠️ [WORKER SERVICE] Failed to calculate translation cost: %v", err)
+		} else {
+			translationBase := inCost + outCost
+			translationTokens := inTok + outTok
+			var translationDesc string
+			if strings.Contains(serviceName, "gpt") {
+				translationDesc = "GPT dịch SRT"
+			} else {
+				translationDesc = "Gemini dịch SRT"
+			}
+
+			if err := creditService.DeductCredits(job.UserID, translationBase, serviceName, translationDesc, &captionHistory.ID, "per_token", float64(translationTokens)); err != nil {
+				log.Printf("⚠️ [WORKER SERVICE] Failed to deduct translation credits: %v", err)
+			} else {
+				log.Printf("✅ [WORKER SERVICE] Deducted %.6f credits for translation", translationBase)
+			}
+		}
+	}
+
+	// 3) TTS per_character
+	if result.Transcript != "" {
+		ttsBase, err := pricingService.CalculateTTSCost(result.Transcript, true)
+		if err != nil {
+			log.Printf("⚠️ [WORKER SERVICE] Failed to calculate TTS cost: %v", err)
+		} else {
+			if err := creditService.DeductCredits(job.UserID, ttsBase, "tts", "Google TTS", &captionHistory.ID, "per_character", float64(len([]rune(result.Transcript)))); err != nil {
+				log.Printf("⚠️ [WORKER SERVICE] Failed to deduct TTS credits: %v", err)
+			} else {
+				log.Printf("✅ [WORKER SERVICE] Deducted %.6f credits for TTS", ttsBase)
+			}
+		}
 	}
 
 	// Cập nhật trạng thái process thành completed
@@ -401,7 +504,25 @@ func (ws *WorkerService) runProcessVideo(job *AudioProcessingJob) (string, error
 	processService.UpdateProcessStatus(job.ProcessID, "completed")
 	processService.UpdateProcessVideoID(job.ProcessID, captionHistory.ID)
 
+	log.Printf("🏁 [WORKER SERVICE] Process-video job %s hoàn thành thành công!", job.ID)
 	return result.FinalVideoPath, nil
+}
+
+// getAudioDuration trả về duration (giây) của file audio/video
+func getAudioDuration(filePath string) float64 {
+	cmd := exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filePath)
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("⚠️ [WORKER SERVICE] Failed to get audio duration: %v", err)
+		return 0
+	}
+	durStr := strings.TrimSpace(string(output))
+	dur, err := strconv.ParseFloat(durStr, 64)
+	if err != nil {
+		log.Printf("⚠️ [WORKER SERVICE] Failed to parse audio duration: %v", err)
+		return 0
+	}
+	return dur
 }
 
 // monitor theo dõi trạng thái của worker service

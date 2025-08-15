@@ -2,6 +2,7 @@ package service
 
 import (
 	"creator-tool-backend/config"
+	"path/filepath"
 	"time"
 
 	"os"
@@ -130,28 +131,32 @@ func (s *ProcessStatusService) GetUserActiveProcesses(userID uint) ([]config.Use
 	return processes, err
 }
 
-// DeleteCaptionHistoryAndFiles xóa record CaptionHistory và tất cả file vật lý liên quan
+// DeleteCaptionHistoryAndFiles xóa tất cả file vật lý liên quan và soft delete record CaptionHistory
 func (s *ProcessStatusService) DeleteCaptionHistoryAndFiles(history *config.CaptionHistory) error {
-	deleteFile := func(path string) {
-		if path != "" {
-			_ = os.Remove(path)
-		}
+	var videoDir string
+	if history.VideoFilename != "" {
+		videoDir = filepath.Dir(history.VideoFilename)
+	} else if history.MergedVideoFile != "" {
+		videoDir = filepath.Dir(history.MergedVideoFile)
+	} else if history.SrtFile != "" {
+		videoDir = filepath.Dir(history.SrtFile)
 	}
-	deleteFile(history.VideoFilename)
-	deleteFile(history.SrtFile)
-	deleteFile(history.OriginalSrtFile)
-	deleteFile(history.TTSFile)
-	deleteFile(history.MergedVideoFile)
-	deleteFile(history.BackgroundMusic)
-	// Có thể xóa thêm các file khác nếu cần
-	return config.Db.Delete(history).Error
+
+	// Xóa toàn bộ thư mục chứa tài nguyên
+	if videoDir != "" && videoDir != "." && videoDir != "/" {
+		_ = os.RemoveAll(videoDir)
+	}
+
+	// Soft delete - chỉ cập nhật deleted_at, không xóa bản ghi thực sự
+	now := time.Now()
+	return config.Db.Model(history).Update("deleted_at", &now).Error
 }
 
-// CleanupOldCaptionHistories xóa các CaptionHistory quá 24h và file liên quan
+// CleanupOldCaptionHistories xóa các CaptionHistory quá 24h và file liên quan (soft delete)
 func (s *ProcessStatusService) CleanupOldCaptionHistories() error {
 	cutoff := time.Now().Add(-24 * time.Hour)
 	var oldHistories []config.CaptionHistory
-	if err := config.Db.Where("created_at < ?", cutoff).Find(&oldHistories).Error; err != nil {
+	if err := config.Db.Where("created_at < ? AND deleted_at IS NULL", cutoff).Find(&oldHistories).Error; err != nil {
 		return err
 	}
 	for _, history := range oldHistories {
@@ -160,7 +165,7 @@ func (s *ProcessStatusService) CleanupOldCaptionHistories() error {
 	return nil
 }
 
-// LimitUserCaptionHistories giữ tối đa 10 action gần nhất cho mỗi user
+// LimitUserCaptionHistories giữ tối đa 10 action gần nhất cho mỗi user (soft delete)
 func (s *ProcessStatusService) LimitUserCaptionHistories(userID uint) error {
 	var histories []config.CaptionHistory
 	if err := config.Db.Where("user_id = ? AND deleted_at IS NULL", userID).Order("created_at desc").Find(&histories).Error; err != nil {
@@ -169,7 +174,7 @@ func (s *ProcessStatusService) LimitUserCaptionHistories(userID uint) error {
 	if len(histories) <= 10 {
 		return nil
 	}
-	// Xóa các action cũ nhất (bắt đầu từ index 10)
+	// Soft delete các action cũ nhất (bắt đầu từ index 10)
 	for i := 10; i < len(histories); i++ {
 		s.DeleteCaptionHistoryAndFiles(&histories[i])
 	}

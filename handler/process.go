@@ -991,7 +991,22 @@ func TikTokOptimizerHandler(c *gin.Context) {
 
 	// Generate optimized content với service config
 	localizedContent, err := tikTokManager.GenerateOptimizedContentWithConfig(transcript, contentCategory, targetLanguage, duration, apiKey)
-	// err ở đây luôn nil vì đã check trước; xóa nhánh điều kiện thừa tránh cảnh báo linter
+	if err != nil {
+		creditService.UnlockCredits(userID, totalCost, "tiktok-optimizer", "Unlock due to analysis error", nil)
+		config.Db.Model(processStatus).Update("status", "failed")
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Analysis error: " + err.Error()})
+		return
+	}
+
+	// Kiểm tra localizedContent có nil không
+	if localizedContent == nil {
+		creditService.UnlockCredits(userID, totalCost, "tiktok-optimizer", "Unlock due to nil localized content", nil)
+		config.Db.Model(processStatus).Update("status", "failed")
+		util.CleanupDir(videoDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate optimized content"})
+		return
+	}
 
 	// Convert localized content to analysis result
 	analysisResult := &service.TikTokAnalysisResult{
@@ -1011,17 +1026,11 @@ func TikTokOptimizerHandler(c *gin.Context) {
 		SoundSuggestions:  service.GenerateSoundSuggestions(contentCategory, targetAudience, targetLanguage),
 		AnalysisMethod:    "ai-enhanced",
 	}
-	if err != nil {
-		creditService.UnlockCredits(userID, totalCost, "tiktok-optimizer", "Unlock due to analysis error", nil)
-		config.Db.Model(processStatus).Update("status", "failed")
-		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Analysis error: " + err.Error()})
-		return
-	}
 
 	// Convert analysis result to map for compatibility
 	result := map[string]interface{}{
 		"hook_score":         analysisResult.HookScore,
+		"duration":           duration,
 		"viral_potential":    analysisResult.ViralPotential,
 		"optimization_tips":  analysisResult.OptimizationTips,
 		"trending_hashtags":  analysisResult.TrendingHashtags,
@@ -1047,6 +1056,7 @@ func TikTokOptimizerHandler(c *gin.Context) {
 		Transcript:          transcript,
 		Segments:            jsonData,
 		ProcessType:         "tiktok-optimize",
+		VideoDuration:       duration,
 		CreatedAt:           time.Now(),
 	}
 	// Gán các trường TikTok Optimizer nếu có
@@ -1273,6 +1283,15 @@ func CreateSubtitleHandler(c *gin.Context) {
 		return
 	}
 
+	// Lấy duration từ middleware
+	fileDurationInterface, exists := c.Get("file_duration")
+	var fileDuration float64
+	if exists {
+		if duration, ok := fileDurationInterface.(float64); ok {
+			fileDuration = duration
+		}
+	}
+
 	// Tạo caption history
 	segmentsJSON, _ := json.Marshal(segments)
 	captionHistory := config.CaptionHistory{
@@ -1284,6 +1303,7 @@ func CreateSubtitleHandler(c *gin.Context) {
 		SrtFile:             originalSRTPath, // Sẽ được update nếu có dịch
 		OriginalSrtFile:     originalSRTPath, // Luôn là SRT gốc
 		ProcessType:         "create-subtitle",
+		VideoDuration:       fileDuration,
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
 	}

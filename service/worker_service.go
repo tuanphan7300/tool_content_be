@@ -2,17 +2,20 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"creator-tool-backend/config"
+	"gorm.io/datatypes"
 )
 
 type WorkerService struct {
@@ -410,10 +413,14 @@ func (ws *WorkerService) runProcessVideo(job *AudioProcessingJob) (string, error
 		result.TranslatedSRTPath, result.TTSPath, result.FinalVideoPath)
 
 	// Lưu lịch sử vào database
+	segmentsJSON, _ := json.Marshal(result.Segments)
 	captionHistory := config.CaptionHistory{
 		UserID:              job.UserID,
 		VideoFilename:       filepath.Join(job.VideoDir, job.FileName),
 		VideoFilenameOrigin: job.FileName,
+		Transcript:          result.Transcript,
+		Segments:            datatypes.JSON(segmentsJSON),
+		SegmentsVi:          datatypes.JSON(segmentsJSON), // Sử dụng segments gốc cho segments_vi
 		SrtFile:             result.TranslatedSRTPath,
 		OriginalSrtFile:     result.OriginalSRTPath,
 		TTSFile:             result.TTSPath,
@@ -424,6 +431,86 @@ func (ws *WorkerService) runProcessVideo(job *AudioProcessingJob) (string, error
 	}
 	if err := config.Db.Create(&captionHistory).Error; err != nil {
 		log.Printf("⚠️ [WORKER SERVICE] Failed to save process-video history: %v", err)
+		return "", fmt.Errorf("failed to save to database: %v", err)
+	}
+
+	// Xử lý credit deduction giống như trong ProcessVideoParallelHandler
+	creditService := NewCreditService()
+	pricingService := NewPricingService()
+
+	// Tính duration để tính chi phí
+	duration := getAudioDuration(job.AudioPath)
+	durationMinutes := duration / 60.0
+
+	// 1) Whisper (per_minute)
+	whisperBase, err := pricingService.CalculateWhisperCost(durationMinutes)
+	if err != nil {
+		log.Printf("⚠️ [WORKER SERVICE] Failed to calculate Whisper cost: %v", err)
+	} else {
+		if err := creditService.DeductCredits(job.UserID, whisperBase, "whisper", "Whisper transcribe", &captionHistory.ID, "per_minute", durationMinutes); err != nil {
+			log.Printf("⚠️ [WORKER SERVICE] Failed to deduct Whisper credits: %v", err)
+		} else {
+			log.Printf("✅ [WORKER SERVICE] Deducted %.6f credits for Whisper", whisperBase)
+		}
+	}
+
+	// 2) Translation (Gemini/GPT) per_token
+	serviceName, _, err := pricingService.GetActiveServiceForType("srt_translation")
+	if err != nil {
+		log.Printf("⚠️ [WORKER SERVICE] Failed to get translation service: %v", err)
+	} else {
+		// Tính chi phí dịch theo input/output riêng
+		var inputText, outputText string
+		if result.OriginalSRTPath != "" {
+			if b, e := os.ReadFile(result.OriginalSRTPath); e == nil {
+				inputText = string(b)
+			}
+		}
+		if result.TranslatedSRTPath != "" {
+			if b, e := os.ReadFile(result.TranslatedSRTPath); e == nil {
+				outputText = string(b)
+			}
+		}
+		if inputText == "" {
+			inputText = result.Transcript
+		}
+		if outputText == "" {
+			outputText = result.Transcript
+		}
+
+		inCost, outCost, inTok, outTok, _, err := pricingService.CalculateLLMCostSplit(inputText, outputText, serviceName)
+		if err != nil {
+			log.Printf("⚠️ [WORKER SERVICE] Failed to calculate translation cost: %v", err)
+		} else {
+			translationBase := inCost + outCost
+			translationTokens := inTok + outTok
+			var translationDesc string
+			if strings.Contains(serviceName, "gpt") {
+				translationDesc = "GPT dịch SRT"
+			} else {
+				translationDesc = "Gemini dịch SRT"
+			}
+
+			if err := creditService.DeductCredits(job.UserID, translationBase, serviceName, translationDesc, &captionHistory.ID, "per_token", float64(translationTokens)); err != nil {
+				log.Printf("⚠️ [WORKER SERVICE] Failed to deduct translation credits: %v", err)
+			} else {
+				log.Printf("✅ [WORKER SERVICE] Deducted %.6f credits for translation", translationBase)
+			}
+		}
+	}
+
+	// 3) TTS per_character
+	if result.Transcript != "" {
+		ttsBase, err := pricingService.CalculateTTSCost(result.Transcript, true)
+		if err != nil {
+			log.Printf("⚠️ [WORKER SERVICE] Failed to calculate TTS cost: %v", err)
+		} else {
+			if err := creditService.DeductCredits(job.UserID, ttsBase, "tts", "Google TTS", &captionHistory.ID, "per_character", float64(len([]rune(result.Transcript)))); err != nil {
+				log.Printf("⚠️ [WORKER SERVICE] Failed to deduct TTS credits: %v", err)
+			} else {
+				log.Printf("✅ [WORKER SERVICE] Deducted %.6f credits for TTS", ttsBase)
+			}
+		}
 	}
 
 	// Cập nhật trạng thái process thành completed
@@ -433,6 +520,23 @@ func (ws *WorkerService) runProcessVideo(job *AudioProcessingJob) (string, error
 
 	log.Printf("🏁 [WORKER SERVICE] Process-video job %s hoàn thành thành công!", job.ID)
 	return result.FinalVideoPath, nil
+}
+
+// getAudioDuration trả về duration (giây) của file audio/video
+func getAudioDuration(filePath string) float64 {
+	cmd := exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filePath)
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("⚠️ [WORKER SERVICE] Failed to get audio duration: %v", err)
+		return 0
+	}
+	durStr := strings.TrimSpace(string(output))
+	dur, err := strconv.ParseFloat(durStr, 64)
+	if err != nil {
+		log.Printf("⚠️ [WORKER SERVICE] Failed to parse audio duration: %v", err)
+		return 0
+	}
+	return dur
 }
 
 // monitor theo dõi trạng thái của worker service

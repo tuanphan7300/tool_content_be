@@ -73,17 +73,18 @@ type AdminUserListItem struct {
 
 // AdminProcessListItem represents process item for admin list
 type AdminProcessListItem struct {
-	ID          uint       `json:"id"`
-	UserID      uint       `json:"user_id"`
-	Status      string     `json:"status"`
-	ProcessType string     `json:"process_type"`
-	StartedAt   time.Time  `json:"started_at"`
-	CompletedAt *time.Time `json:"completed_at"`
-	VideoID     *uint      `json:"video_id"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	UserEmail   string     `json:"user_email"`
-	UserName    string     `json:"user_name"`
+	ID            uint       `json:"id"`
+	UserID        uint       `json:"user_id"`
+	Status        string     `json:"status"`
+	ProcessType   string     `json:"process_type"`
+	StartedAt     time.Time  `json:"started_at"`
+	CompletedAt   *time.Time `json:"completed_at"`
+	VideoID       *uint      `json:"video_id"`
+	VideoDuration *float64   `json:"video_duration"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	UserEmail     string     `json:"user_email"`
+	UserName      string     `json:"user_name"`
 }
 
 // AdminUploadListItem represents upload item for admin list
@@ -353,18 +354,28 @@ func AdminProcessStatusHandler(c *gin.Context) {
 		var user config.Users
 		db.First(&user, process.UserID)
 
+		// Get video duration if video_id exists
+		var videoDuration *float64
+		if process.VideoID != nil {
+			var captionHistory config.CaptionHistory
+			if err := db.First(&captionHistory, *process.VideoID).Error; err == nil {
+				videoDuration = &captionHistory.VideoDuration
+			}
+		}
+
 		processList = append(processList, AdminProcessListItem{
-			ID:          process.ID,
-			UserID:      process.UserID,
-			Status:      process.Status,
-			ProcessType: process.ProcessType,
-			StartedAt:   process.StartedAt,
-			CompletedAt: process.CompletedAt,
-			VideoID:     process.VideoID,
-			CreatedAt:   process.CreatedAt,
-			UpdatedAt:   process.UpdatedAt,
-			UserEmail:   user.Email,
-			UserName:    user.Name,
+			ID:            process.ID,
+			UserID:        process.UserID,
+			Status:        process.Status,
+			ProcessType:   process.ProcessType,
+			StartedAt:     process.StartedAt,
+			CompletedAt:   process.CompletedAt,
+			VideoID:       process.VideoID,
+			VideoDuration: videoDuration,
+			CreatedAt:     process.CreatedAt,
+			UpdatedAt:     process.UpdatedAt,
+			UserEmail:     user.Email,
+			UserName:      user.Name,
 		})
 	}
 

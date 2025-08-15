@@ -30,7 +30,7 @@ func AuthMiddleware() gin.HandlerFunc {
 		})
 
 		if err != nil {
-			c.AbortWithStatusJSON(401, gin.H{"error": "invalid token: " + err.Error()})
+			c.AbortWithStatusJSON(401, gin.H{"error": "Lỗi Đăng Nhập"})
 			return
 		}
 
@@ -41,10 +41,10 @@ func AuthMiddleware() gin.HandlerFunc {
 				c.Set("user_id", uint(userID))
 				c.Next()
 			} else {
-				c.AbortWithStatusJSON(401, gin.H{"error": "invalid user_id in token"})
+				c.AbortWithStatusJSON(401, gin.H{"error": "Lỗi Đăng Nhập"})
 			}
 		} else {
-			c.AbortWithStatusJSON(401, gin.H{"error": "invalid token claims"})
+			c.AbortWithStatusJSON(401, gin.H{"error": "Lỗi Đăng Nhập"})
 		}
 	}
 }

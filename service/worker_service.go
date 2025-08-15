@@ -353,6 +353,9 @@ func (ws *WorkerService) runBurnSubtitle(job *AudioProcessingJob) (string, error
 		return "", fmt.Errorf("failed to burn subtitle: %v, output: %s", err, string(output))
 	}
 
+	// Lấy duration của video để lưu vào database
+	videoDuration := getAudioDuration(videoPath)
+
 	// Lưu lịch sử vào database
 	captionHistory := config.CaptionHistory{
 		UserID:              job.UserID,
@@ -361,6 +364,7 @@ func (ws *WorkerService) runBurnSubtitle(job *AudioProcessingJob) (string, error
 		SrtFile:             job.SubtitlePath,
 		MergedVideoFile:     outputPath,
 		ProcessType:         "burn-sub",
+		VideoDuration:       videoDuration,
 		CreatedAt:           time.Now(),
 	}
 	if err := config.Db.Create(&captionHistory).Error; err != nil {
@@ -413,8 +417,13 @@ func (ws *WorkerService) runProcessVideo(job *AudioProcessingJob) (string, error
 	log.Printf("📊 [WORKER SERVICE] Results: srt=%s, tts=%s, video=%s",
 		result.TranslatedSRTPath, result.TTSPath, result.FinalVideoPath)
 
+	// Tính duration để tính chi phí và lưu vào database
+	duration := getAudioDuration(job.AudioPath)
+	durationMinutes := duration / 60.0
+
 	// Lưu lịch sử vào database
 	segmentsJSON, _ := json.Marshal(result.Segments)
+
 	captionHistory := config.CaptionHistory{
 		UserID:              job.UserID,
 		VideoFilename:       filepath.Join(job.VideoDir, job.FileName),
@@ -428,6 +437,7 @@ func (ws *WorkerService) runProcessVideo(job *AudioProcessingJob) (string, error
 		MergedVideoFile:     result.FinalVideoPath,
 		BackgroundMusic:     result.BackgroundPath,
 		ProcessType:         "process-video",
+		VideoDuration:       duration,
 		CreatedAt:           time.Now(),
 	}
 	if err := config.Db.Create(&captionHistory).Error; err != nil {
@@ -438,10 +448,6 @@ func (ws *WorkerService) runProcessVideo(job *AudioProcessingJob) (string, error
 	// Xử lý credit deduction giống như trong ProcessVideoParallelHandler
 	creditService := NewCreditService()
 	pricingService := NewPricingService()
-
-	// Tính duration để tính chi phí
-	duration := getAudioDuration(job.AudioPath)
-	durationMinutes := duration / 60.0
 
 	// 1) Whisper (per_minute)
 	whisperBase, err := pricingService.CalculateWhisperCost(durationMinutes)

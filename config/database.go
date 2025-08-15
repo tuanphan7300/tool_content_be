@@ -99,6 +99,7 @@ type CaptionHistory struct {
 	OptimizationTips  datatypes.JSON `json:"optimization_tips" gorm:"type:json"`
 	EngagementPrompts datatypes.JSON `json:"engagement_prompts" gorm:"type:json"`
 	CallToAction      string         `json:"call_to_action" gorm:"type:text"`
+	VideoDuration     float64        `json:"video_duration" gorm:"type:decimal(10,2);comment:'Duration in seconds'"`
 	DeletedAt         *time.Time     `json:"deleted_at" gorm:"index"`
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`

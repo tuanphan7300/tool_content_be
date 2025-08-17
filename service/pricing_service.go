@@ -382,9 +382,11 @@ func (s *PricingService) EstimateProcessVideoCost(durationMinutes float64, trans
 	}
 
 	// Gemini/GPT cost (dịch SRT) - ước tính input + output
-	// Prompt bao gồm: instructions + SRT content (input)
+	// Prompt bao gồm: context analysis + instructions + SRT content (input)
 	// Output ước tính gần bằng độ dài SRT đích
-	promptLength := 500 + srtLength // 500 ký tự cho instructions
+	// Context analysis: ~1000 ký tự cho prompt phân tích
+	contextAnalysisLength := 1000
+	promptLength := contextAnalysisLength + 500 + srtLength // context analysis + instructions + SRT content
 	inCost, outCost, _, _, _, err := s.CalculateLLMCostSplit(strings.Repeat("a", promptLength), strings.Repeat("a", srtLength), geminiServiceName)
 	if err != nil {
 		return nil, err
@@ -429,9 +431,11 @@ func (s *PricingService) EstimateProcessVideoCostWithMarkup(durationMinutes floa
 	}
 
 	// Gemini/GPT cost (dịch SRT) - ước tính input + output
-	// Prompt bao gồm: instructions + SRT content (input)
+	// Prompt bao gồm: context analysis + instructions + SRT content (input)
 	// Output ước tính gần bằng độ dài SRT đích
-	promptLength := 500 + srtLength // 500 ký tự cho instructions
+	// Context analysis: ~1000 ký tự cho prompt phân tích
+	contextAnalysisLength := 1000
+	promptLength := contextAnalysisLength + 500 + srtLength // context analysis + instructions + SRT content
 	inCost, outCost, _, _, _, err := s.CalculateLLMCostSplit(strings.Repeat("a", promptLength), strings.Repeat("a", srtLength), geminiServiceName)
 	if err != nil {
 		return nil, err

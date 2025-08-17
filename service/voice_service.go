@@ -289,6 +289,31 @@ func BurnSubtitleWithBackground(videoPath, srtPath, outputDir string, textColor,
 		return "", fmt.Errorf("Video file not found: %s", videoPath)
 	}
 
+	// Simple validation: check if SRT file starts with a number (index)
+	srtContent, err := os.ReadFile(srtPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read SRT file: %v", err)
+	}
+
+	// Quick fix: remove markdown code blocks if present
+	content := string(srtContent)
+	if strings.HasPrefix(content, "```srt") || strings.HasPrefix(content, "```") {
+		log.Printf("⚠️ [BURN SUBTITLE] SRT file has markdown code blocks, fixing...")
+		content = strings.TrimPrefix(content, "```srt")
+		content = strings.TrimPrefix(content, "```")
+		content = strings.TrimSuffix(content, "```")
+		content = strings.TrimSpace(content)
+
+		// Create fixed SRT file
+		fixedSrtPath := strings.Replace(srtPath, ".srt", "_fixed.srt", 1)
+		if err := os.WriteFile(fixedSrtPath, []byte(content), 0644); err != nil {
+			log.Printf("⚠️ [BURN SUBTITLE] Failed to create fixed SRT file: %v", err)
+		} else {
+			srtPath = fixedSrtPath
+			log.Printf("✅ [BURN SUBTITLE] Created fixed SRT file: %s", fixedSrtPath)
+		}
+	}
+
 	// Generate output filename with timestamp
 	timestamp := time.Now().Format("20060102_150405")
 	outputPath := filepath.Join(outputDir, fmt.Sprintf("burned_%s.mp4", timestamp))

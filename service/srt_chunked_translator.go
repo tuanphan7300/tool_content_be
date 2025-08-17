@@ -39,7 +39,7 @@ type SRTChunk struct {
 // SRTChunkingStrategy chiến lược chia chunk
 type SRTChunkingStrategy struct {
 	MaxChunkSize    int           // Số câu tối đa mỗi chunk (mặc định: 50)
-	OverlapSize     int           // Số câu overlap giữa các chunk (mặc định: 5)
+	OverlapSize     int           // Số câu overlap giữa các chunk (mặc định: 0)
 	MaxConcurrent   int           // Số chunk xử lý đồng thời (mặc định: 5)
 	TimeoutPerChunk time.Duration // Timeout cho mỗi chunk (mặc định: 60s)
 	RetryAttempts   int           // Số lần retry (mặc định: 2)
@@ -70,7 +70,7 @@ func InitSRTChunkedTranslator() *SRTChunkedTranslator {
 
 	chunkedTranslator = &SRTChunkedTranslator{
 		maxChunkSize:    50, // 50 câu mỗi chunk
-		overlapSize:     5,  // 5 câu overlap
+		overlapSize:     0,  // 0 câu overlap
 		maxConcurrent:   5,  // 5 chunks đồng thời
 		timeoutPerChunk: 60 * time.Second,
 		retryAttempts:   2,
@@ -404,6 +404,9 @@ Mục tiêu là làm cho lời thoại chân thực như người Việt đang n
 QUY TẮC 4: QUẢ TRẢ VỀ LUÔN LÀ ĐỊNH DẠNG SRT
 Kết quả trả về chỉ là nội dung file srt, không thêm bất kỳ 1 ghi chú hay giải thích gì khác.
 QUY TẮC 5: Tên nhân vật, hoặc địa danh. ưu tiên để dạng hán việt, ví dụ: Nhị Cẩu, Cúc Hoa, Đại Lang, Lão Tam .... Bắc Kinh, Hồ Nam, Đại Hưng An Lĩnh
+QUY TẮC 6: XỬ LÝ ĐẠI TỪ NHÂN XƯNG CÓ LỰA CHỌN
+Khi quy tắc xưng hô cung cấp một lựa chọn (ví dụ: 'thầy/cô', 'tôi/em' ...), bạn BẮT BUỘC PHẢI CHỌN MỘT phương án phù hợp nhất với ngữ cảnh của câu thoại đó. TUYỆT ĐỐI KHÔNG được viết cả hai lựa chọn cách nhau bằng dấu gạch chéo trong câu dịch.
+
 KIỂM TRA CUỐI CÙNG:
 Trước khi xuất kết quả, hãy tự kiểm tra lại để chắc chắn:
 Không có dòng thời gian nào bị sai lệch.
@@ -492,7 +495,7 @@ func (t *SRTChunkedTranslator) mergeChunks(
 			return "", fmt.Errorf("failed to parse chunk %d result: %v", chunk.ChunkID, err)
 		}
 
-		// Xử lý overlap với chunk trước
+		// Xử lý overlap với chunk trước (chỉ khi có overlap)
 		if i > 0 && strategy.OverlapSize > 0 {
 			chunkEntries = t.handleOverlap(chunkEntries, chunks[i-1], overlapMap)
 		}
@@ -828,7 +831,7 @@ func TranslateSRTWithChunkingWrapper(srtFilePath, apiKey, modelName, targetLangu
 	// Sử dụng strategy mặc định
 	strategy := &SRTChunkingStrategy{
 		MaxChunkSize:    50, // 50 câu mỗi chunk
-		OverlapSize:     5,  // 5 câu overlap
+		OverlapSize:     0,  // 0 câu overlap
 		MaxConcurrent:   5,  // 5 chunks đồng thời
 		TimeoutPerChunk: 60 * time.Second,
 		RetryAttempts:   2,
@@ -841,4 +844,279 @@ func TranslateSRTWithChunkingWrapper(srtFilePath, apiKey, modelName, targetLangu
 	}
 
 	return result.TranslatedContent, nil
+}
+
+// TranslateSRTWithContextAwareness wrapper function mới với context awareness
+// Hỗ trợ cả GPT và Gemini dựa trên service config
+func TranslateSRTWithContextAwareness(srtFilePath, apiKey, modelName, targetLanguage string) (string, error) {
+	log.Printf("🚀 [CONTEXT AWARE TRANSLATION] Bắt đầu context-aware translation cho %s", srtFilePath)
+
+	// Bước 1: Phân tích ngữ cảnh (một lần gọi API duy nhất)
+	contextAnalyzer := NewContextAnalyzer(apiKey, modelName)
+	contextResult, err := contextAnalyzer.AnalyzeSRTContext(srtFilePath, targetLanguage)
+	if err != nil {
+		log.Printf("⚠️ [CONTEXT AWARE TRANSLATION] Context analysis failed, fallback to chunked translation: %v", err)
+		// Fallback to chunked translation nếu context analysis thất bại
+		return TranslateSRTWithChunkingWrapper(srtFilePath, apiKey, modelName, targetLanguage)
+	}
+
+	// Bước 2: Tạo prompt mẫu với context awareness
+	contextAwarePrompt := contextAnalyzer.GenerateContextAwarePrompt(contextResult, targetLanguage)
+
+	// Bước 3: Chia file SRT thành chunks
+	chunks, err := SplitSRTIntoChunksForContextAware(srtFilePath, 50, 0) // 50 câu mỗi chunk, 0 overlap
+	if err != nil {
+		return "", fmt.Errorf("failed to split SRT into chunks: %v", err)
+	}
+
+	log.Printf("📊 [CONTEXT AWARE TRANSLATION] Đã chia SRT thành %d chunks", len(chunks))
+
+	// Bước 4: Xử lý chunks với context-aware prompts
+	results, err := processChunksWithContextAwareness(chunks, contextAwarePrompt, apiKey, modelName, 5) // 5 concurrent
+	if err != nil {
+		return "", fmt.Errorf("failed to process chunks with context awareness: %v", err)
+	}
+
+	// Bước 5: Ghép chunks lại
+	mergedContent, err := mergeChunksWithContextAwareness(results, chunks)
+	if err != nil {
+		return "", fmt.Errorf("failed to merge chunks: %v", err)
+	}
+
+	log.Printf("✅ [CONTEXT AWARE TRANSLATION] Context-aware translation hoàn thành!")
+	return mergedContent, nil
+}
+
+// SplitSRTIntoChunksForContextAware chia SRT thành chunks cho context-aware translation
+func SplitSRTIntoChunksForContextAware(srtFilePath string, maxChunkSize, overlapSize int) ([]*SRTChunk, error) {
+	// Tạo temporary translator để sử dụng createChunkContent method
+	tempTranslator := &SRTChunkedTranslator{}
+	srtContent, err := os.ReadFile(srtFilePath)
+	if err != nil {
+		return nil, err
+	}
+
+	entries, err := parseSRT(string(srtContent))
+	if err != nil {
+		return nil, err
+	}
+
+	var chunks []*SRTChunk
+	chunkIndex := 0
+
+	for i := 0; i < len(entries); i += maxChunkSize - overlapSize {
+		endIndex := i + maxChunkSize
+		if endIndex > len(entries) {
+			endIndex = len(entries)
+		}
+
+		chunkContent := tempTranslator.createChunkContent(entries[i:endIndex])
+
+		chunk := &SRTChunk{
+			ChunkID:    chunkIndex,
+			StartIndex: i,
+			EndIndex:   endIndex,
+			Content:    chunkContent,
+			EntryCount: endIndex - i,
+			Processed:  false,
+		}
+		chunks = append(chunks, chunk)
+		chunkIndex++
+	}
+
+	return chunks, nil
+}
+
+// processChunksWithContextAwareness xử lý chunks với context-aware prompts
+func processChunksWithContextAwareness(chunks []*SRTChunk, contextAwarePrompt, apiKey, modelName string, maxConcurrent int) ([]*SRTChunk, error) {
+	log.Printf("🚀 [CONTEXT AWARE TRANSLATION] Bắt đầu xử lý %d chunks với context awareness (max concurrent: %d)", len(chunks), maxConcurrent)
+
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, maxConcurrent)
+	results := make([]*SRTChunk, len(chunks))
+	var resultMutex sync.Mutex
+
+	// Khởi động workers
+	for _, chunk := range chunks {
+		wg.Add(1)
+		go func(chunk *SRTChunk, index int) {
+			defer wg.Done()
+
+			// Acquire semaphore slot
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			log.Printf("🔄 [CONTEXT AWARE TRANSLATION] Worker bắt đầu xử lý chunk %d (index: %d)", chunk.ChunkID, index)
+
+			// Tạo prompt cho chunk này với context awareness
+			chunkPrompt := strings.Replace(contextAwarePrompt, "{{SRT_CONTENT}}", chunk.Content, 1)
+
+			// Xử lý chunk với context-aware prompt
+			result := processSingleChunkWithContextAwareness(chunk, chunkPrompt, apiKey, modelName)
+
+			// Lưu kết quả thread-safe
+			resultMutex.Lock()
+			results[index] = result
+			resultMutex.Unlock()
+
+			if result.Error != nil {
+				log.Printf("❌ [CONTEXT AWARE TRANSLATION] Chunk %d failed: %v", chunk.ChunkID, result.Error)
+			} else {
+				log.Printf("✅ [CONTEXT AWARE TRANSLATION] Chunk %d completed successfully", chunk.ChunkID)
+			}
+		}(chunk, chunk.ChunkID)
+	}
+
+	log.Printf("⏳ [CONTEXT AWARE TRANSLATION] Đang chờ tất cả %d workers hoàn thành...", len(chunks))
+	wg.Wait()
+	log.Printf("🎯 [CONTEXT AWARE TRANSLATION] Tất cả workers đã hoàn thành!")
+
+	return results, nil
+}
+
+// processSingleChunkWithContextAwareness xử lý một chunk với context-aware prompt
+func processSingleChunkWithContextAwareness(chunk *SRTChunk, chunkPrompt, apiKey, modelName string) *SRTChunk {
+	// Tự động chọn service dựa trên modelName
+	var translatedContent string
+	var err error
+
+	if strings.Contains(strings.ToLower(modelName), "gpt") {
+		translatedContent, err = callGPTAPIForChunk(chunkPrompt, apiKey, modelName)
+	} else {
+		translatedContent, err = callGeminiAPIForChunk(chunkPrompt, apiKey, modelName)
+	}
+
+	if err != nil {
+		chunk.Error = err
+		chunk.Processed = false
+	} else {
+		chunk.Result = translatedContent
+		chunk.Processed = true
+		chunk.Error = nil
+	}
+
+	return chunk
+}
+
+// callGPTAPIForChunk gọi GPT API cho một chunk
+func callGPTAPIForChunk(prompt, apiKey, modelName string) (string, error) {
+	url := "https://api.openai.com/v1/chat/completions"
+
+	requestBody := map[string]interface{}{
+		"model":       modelName,
+		"messages":    []map[string]string{{"role": "user", "content": prompt}},
+		"temperature": 0.1,
+		"max_tokens":  4000,
+	}
+
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %v", err)
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	req = req.WithContext(ctx)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("GPT API request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GPT API error: %s - %s", resp.Status, string(body))
+	}
+
+	var response struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+
+	if err := json.Unmarshal(body, &response); err != nil {
+		return "", fmt.Errorf("failed to parse GPT response: %v", err)
+	}
+
+	if len(response.Choices) == 0 {
+		return "", fmt.Errorf("no choices in GPT response")
+	}
+
+	translatedContent := response.Choices[0].Message.Content
+
+	// Remove markdown code blocks if present - simple approach
+	translatedContent = strings.TrimPrefix(translatedContent, "```srt")
+	translatedContent = strings.TrimPrefix(translatedContent, "```")
+	translatedContent = strings.TrimSuffix(translatedContent, "```")
+	// translatedContent = strings.TrimSpace(translatedContent)
+
+	// Remove any remaining "srt" at the beginning
+	if strings.HasPrefix(translatedContent, "srt") {
+		translatedContent = strings.TrimPrefix(translatedContent, "srt")
+		//translatedContent = strings.TrimSpace(translatedContent)
+	}
+
+	return translatedContent, nil
+}
+
+// callGeminiAPIForChunk gọi Gemini API cho một chunk
+func callGeminiAPIForChunk(prompt, apiKey, modelName string) (string, error) {
+	// Sử dụng service Gemini có sẵn
+	return GenerateWithGemini(prompt, apiKey, modelName)
+}
+
+// mergeChunksWithContextAwareness ghép chunks lại với context awareness
+func mergeChunksWithContextAwareness(results []*SRTChunk, originalChunks []*SRTChunk) (string, error) {
+	var mergedBuilder strings.Builder
+	var seenEntries map[int]bool = make(map[int]bool)
+	var entryCounter int = 1
+
+	for _, result := range results {
+		if result.Error != nil {
+			return "", fmt.Errorf("chunk %d failed: %v", result.ChunkID, result.Error)
+		}
+
+		if !result.Processed {
+			return "", fmt.Errorf("chunk %d not processed", result.ChunkID)
+		}
+
+		// Parse chunk result để xử lý overlap
+		chunkEntries, err := parseSRT(result.Result)
+		if err != nil {
+			return "", fmt.Errorf("failed to parse chunk %d result: %v", result.ChunkID, err)
+		}
+
+		// Xử lý từng entry trong chunk
+		for _, entry := range chunkEntries {
+			// Kiểm tra xem entry này đã được xử lý chưa (dựa trên index)
+			if !seenEntries[entry.Index] {
+				seenEntries[entry.Index] = true
+
+				// Ghi entry với số thứ tự mới
+				mergedBuilder.WriteString(fmt.Sprintf("%d\n", entryCounter))
+				mergedBuilder.WriteString(fmt.Sprintf("%s --> %s\n", formatTime(entry.Start), formatTime(entry.End)))
+				mergedBuilder.WriteString(entry.Text + "\n\n")
+
+				entryCounter++
+			}
+		}
+	}
+
+	return mergedBuilder.String(), nil
 }

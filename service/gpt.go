@@ -245,6 +245,9 @@ Mục tiêu là làm cho lời thoại chân thực như người Việt đang n
 QUY TẮC 4: QUẢ TRẢ VỀ LUÔN LÀ ĐỊNH DẠNG SRT
 Kết quả trả về chỉ là nội dung file srt, không thêm bất kỳ 1 ghi chú hay giải thích gì khác.
 QUY TẮC 5: Tên nhân vật, hoặc địa danh. ưu tiên để dạng hán việt, ví dụ: Nhị Cẩu, Cúc Hoa, Đại Lang, Lão Tam .... Bắc Kinh, Hồ Nam, Đại Hưng An Lĩnh
+QUY TẮC 6: XỬ LÝ ĐẠI TỪ NHÂN XƯNG CÓ LỰA CHỌN
+Khi quy tắc xưng hô cung cấp một lựa chọn (ví dụ: 'thầy/cô', 'tôi/em' ...), bạn BẮT BUỘC PHẢI CHỌN MỘT phương án phù hợp nhất với ngữ cảnh của câu thoại đó. TUYỆT ĐỐI KHÔNG được viết cả hai lựa chọn cách nhau bằng dấu gạch chéo trong câu dịch.
+
 KIỂM TRA CUỐI CÙNG:
 Trước khi xuất kết quả, hãy tự kiểm tra lại để chắc chắn:
 Không có dòng thời gian nào bị sai lệch.
@@ -296,10 +299,18 @@ File SRT gốc:
 		// Clean up the response - remove any extra text that might be added by GPT
 		translatedContent = strings.TrimSpace(translatedContent)
 
-		// Remove markdown code blocks if present
+		// Remove markdown code blocks if present - simple approach
+		// Remove ```srt, ```, and any language identifier
+		translatedContent = strings.TrimPrefix(translatedContent, "```srt")
 		translatedContent = strings.TrimPrefix(translatedContent, "```")
 		translatedContent = strings.TrimSuffix(translatedContent, "```")
-		translatedContent = strings.TrimSpace(translatedContent)
+		//translatedContent = strings.TrimSpace(translatedContent)
+
+		// Remove any remaining "srt" at the beginning
+		if strings.HasPrefix(translatedContent, "srt") {
+			translatedContent = strings.TrimPrefix(translatedContent, "srt")
+			//translatedContent = strings.TrimSpace(translatedContent)
+		}
 
 		// If GPT added any prefix or explanation, try to extract just the SRT content
 		if strings.Contains(translatedContent, "1\n") {
@@ -340,8 +351,8 @@ File SRT gốc:
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
 
-			// Start SRT content when we see a number
-			if isNumeric(line) {
+			// Start SRT content when we see a number (simple check)
+			if len(line) > 0 && line[0] >= '0' && line[0] <= '9' {
 				inSRTContent = true
 			}
 

@@ -39,6 +39,9 @@ Mục tiêu là làm cho lời thoại chân thực như người Việt đang n
 QUY TẮC 4: QUẢ TRẢ VỀ LUÔN LÀ ĐỊNH DẠNG SRT
 Kết quả trả về chỉ là nội dung file srt, không thêm bất kỳ 1 ghi chú hay giải thích gì khác.
 QUY TẮC 5: Tên nhân vật, hoặc địa danh. ưu tiên để dạng hán việt, ví dụ: Nhị Cẩu, Cúc Hoa, Đại Lang, Lão Tam .... Bắc Kinh, Hồ Nam, Đại Hưng An Lĩnh
+QUY TẮC 6: XỬ LÝ ĐẠI TỪ NHÂN XƯNG CÓ LỰA CHỌN
+Khi quy tắc xưng hô cung cấp một lựa chọn (ví dụ: 'thầy/cô', 'tôi/em' ...), bạn BẮT BUỘC PHẢI CHỌN MỘT phương án phù hợp nhất với ngữ cảnh của câu thoại đó. TUYỆT ĐỐI KHÔNG được viết cả hai lựa chọn cách nhau bằng dấu gạch chéo trong câu dịch.
+
 KIỂM TRA CUỐI CÙNG:
 Trước khi xuất kết quả, hãy tự kiểm tra lại để chắc chắn:
 Không có dòng thời gian nào bị sai lệch.
@@ -58,6 +61,12 @@ File SRT gốc:
 	}
 
 	// Clean up the response - remove any extra text that might be added by Gemini
+	translatedContent = strings.TrimSpace(translatedContent)
+
+	// Remove markdown code blocks if present
+	translatedContent = strings.TrimPrefix(translatedContent, "```srt")
+	translatedContent = strings.TrimPrefix(translatedContent, "```")
+	translatedContent = strings.TrimSuffix(translatedContent, "```")
 	translatedContent = strings.TrimSpace(translatedContent)
 
 	// If Gemini added any prefix or explanation, try to extract just the SRT content
@@ -248,6 +257,8 @@ Mục tiêu là làm cho lời thoại chân thực như người Việt đang n
 QUY TẮC 4: QUẢ TRẢ VỀ LUÔN LÀ ĐỊNH DẠNG SRT
 Kết quả trả về chỉ là nội dung file srt, không thêm bất kỳ 1 ghi chú hay giải thích gì khác.
 QUY TẮC 5: Tên nhân vật, hoặc địa danh. ưu tiên để dạng hán việt, ví dụ: Nhị Cẩu, Cúc Hoa, Đại Lang, Lão Tam .... Bắc Kinh, Hồ Nam, Đại Hưng An Lĩnh
+QUY TẮC 6: XỬ LÝ ĐẠI TỪ NHÂN XƯNG CÓ LỰA CHỌN
+Khi quy tắc xưng hô cung cấp một lựa chọn (ví dụ: 'thầy/cô', 'tôi/em' ...), bạn BẮT BUỘC PHẢI CHỌN MỘT phương án phù hợp nhất với ngữ cảnh của câu thoại đó. TUYỆT ĐỐI KHÔNG được viết cả hai lựa chọn cách nhau bằng dấu gạch chéo trong câu dịch.
 KIỂM TRA CUỐI CÙNG:
 Trước khi xuất kết quả, hãy tự kiểm tra lại để chắc chắn:
 Không có dòng thời gian nào bị sai lệch.
@@ -264,6 +275,12 @@ File SRT gốc:
 	}
 
 	// Clean up the response - remove any extra text that might be added by Gemini
+	translatedContent = strings.TrimSpace(translatedContent)
+
+	// Remove markdown code blocks if present
+	translatedContent = strings.TrimPrefix(translatedContent, "```srt")
+	translatedContent = strings.TrimPrefix(translatedContent, "```")
+	translatedContent = strings.TrimSuffix(translatedContent, "```")
 	translatedContent = strings.TrimSpace(translatedContent)
 
 	// If Gemini added any prefix or explanation, try to extract just the SRT content
@@ -305,7 +322,7 @@ func extractTextFromSRT(srtContent string) string {
 		line = strings.TrimSpace(line)
 
 		// Skip empty lines, numbers (index), and timestamp lines
-		if line == "" || isNumeric(line) || isTimestampLine(line) {
+		if line == "" || (len(line) > 0 && line[0] >= '0' && line[0] <= '9') || isTimestampLine(line) {
 			continue
 		}
 
@@ -313,16 +330,6 @@ func extractTextFromSRT(srtContent string) string {
 	}
 
 	return strings.Join(textLines, " ")
-}
-
-// isNumeric checks if a string is numeric
-func isNumeric(s string) bool {
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return len(s) > 0
 }
 
 // isTimestampLine checks if a line is a timestamp line (contains -->)

@@ -459,13 +459,13 @@ func ProcessVideoHandler(c *gin.Context) {
 			return
 		}
 
-		// Translate the original SRT file using the configured service (Gemini or GPT) with chunked translation
+		// Translate the original SRT file using the configured service (Gemini or GPT) with context-aware translation
 		if strings.Contains(serviceName, "gpt") {
-			// Use GPT for translation with chunking
-			translatedSRTContent, err = service.TranslateSRTWithChunkingWrapper(originalSRTPath, apiKey, srtModelAPIName, targetLanguage)
+			// Use GPT for translation with context awareness
+			translatedSRTContent, err = service.TranslateSRTWithContextAwareness(originalSRTPath, apiKey, srtModelAPIName, targetLanguage)
 		} else {
-			// Use Gemini for translation with chunking (default)
-			translatedSRTContent, err = service.TranslateSRTWithChunkingWrapper(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
+			// Use Gemini for translation with context awareness (default)
+			translatedSRTContent, err = service.TranslateSRTWithContextAwareness(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
 		}
 		if err != nil {
 			creditService.UnlockCredits(userID, estimatedCost-whisperCost, "process-video", "Unlock remaining credits due to translation error", nil)
@@ -1142,6 +1142,7 @@ func CreateSubtitleHandler(c *gin.Context) {
 
 	tempDir := c.GetString("temp_dir")
 	tempAudioPath := c.GetString("temp_audio_path")
+	tempVideoPath := c.GetString("temp_video_path")
 
 	// Nếu pass tất cả kiểm tra, tiếp tục xử lý
 	configg := config.InfaConfig{}
@@ -1296,7 +1297,7 @@ func CreateSubtitleHandler(c *gin.Context) {
 	segmentsJSON, _ := json.Marshal(segments)
 	captionHistory := config.CaptionHistory{
 		UserID:              userID,
-		VideoFilename:       videoFile.Filename,
+		VideoFilename:       tempVideoPath,
 		VideoFilenameOrigin: videoFile.Filename,
 		Transcript:          transcript,
 		Segments:            datatypes.JSON(segmentsJSON),
@@ -1321,12 +1322,12 @@ func CreateSubtitleHandler(c *gin.Context) {
 			return
 		}
 
-		// Dịch SRT theo service được chọn với chunked translation
+		// Dịch SRT theo service được chọn với context-aware translation
 		var translatedSRTContent string
 		if strings.Contains(serviceName, "gpt") {
-			translatedSRTContent, err = service.TranslateSRTWithChunkingWrapper(originalSRTPath, apiKey, srtModelAPIName, targetLanguage)
+			translatedSRTContent, err = service.TranslateSRTWithContextAwareness(originalSRTPath, apiKey, srtModelAPIName, targetLanguage)
 		} else {
-			translatedSRTContent, err = service.TranslateSRTWithChunkingWrapper(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
+			translatedSRTContent, err = service.TranslateSRTWithContextAwareness(originalSRTPath, geminiKey, srtModelAPIName, targetLanguage)
 		}
 		if err != nil {
 			creditService.UnlockCredits(userID, totalCost, "create-subtitle", "Unlock credits due to translation error", nil)

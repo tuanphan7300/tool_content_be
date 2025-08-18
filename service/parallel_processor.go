@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -478,8 +479,16 @@ func (p *ProcessVideoParallel) processVideo(ttsResult *TTSResult, backgroundResu
 func (p *ProcessVideoParallel) processTTSWithOptimizedService(srtContent, targetLanguage string) (string, error) {
 	log.Printf("Processing TTS with Optimized TTS Service...")
 
-	// Khởi tạo Optimized TTS Service
-	ttsService, err := InitOptimizedTTSService("data/google_clound_tts_api.json", 15)
+	// Đọc cấu hình độ song song từ ENV, mặc định 8 cho máy 4 vCPU
+	maxConc := 8
+	if v := os.Getenv("TTS_MAX_CONCURRENT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxConc = n
+		}
+	}
+
+	// Khởi tạo Optimized TTS Service với max concurrent đã cấu hình
+	ttsService, err := InitOptimizedTTSService("data/google_clound_tts_api.json", maxConc)
 	if err != nil {
 		log.Printf("Failed to initialize Optimized TTS Service, falling back to old TTS: %v", err)
 		// Fallback về TTS cũ nếu không thể khởi tạo service mới
@@ -498,7 +507,7 @@ func (p *ProcessVideoParallel) processTTSWithOptimizedService(srtContent, target
 		BackgroundVolume: p.BackgroundVolume,
 		TTSVolume:        p.TTSVolume,
 		SpeakingRate:     p.SpeakingRate,
-		MaxConcurrent:    15,
+		MaxConcurrent:    maxConc,
 		UserID:           0, // Không có user ID trong context này
 	}
 

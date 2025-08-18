@@ -8,6 +8,8 @@ import (
 
 	"creator-tool-backend/service"
 
+	"strconv"
+
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )
@@ -74,7 +76,13 @@ func OptimizedTTSHandler(c *gin.Context) {
 		req.SpeakingRate = 1.2
 	}
 	if req.MaxConcurrent == 0 {
-		req.MaxConcurrent = 15 // Mặc định 15 workers
+		// Đọc từ ENV, mặc định 8 cho máy 4 vCPU
+		req.MaxConcurrent = 8
+		if v := os.Getenv("TTS_MAX_CONCURRENT"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				req.MaxConcurrent = n
+			}
+		}
 	}
 
 	// Tạo job ID

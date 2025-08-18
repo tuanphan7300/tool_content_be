@@ -45,14 +45,24 @@ func InitWorkerService(queueService *QueueService) *WorkerService {
 		return workerService
 	}
 
-	// Tính toán số worker tối ưu dựa trên CPU cores
+	// Tính toán số worker tối ưu: đọc từ ENV, mặc định 2 cho máy 4 vCPU
 	maxWorkers := runtime.NumCPU()
-	if maxWorkers > 4 {
-		maxWorkers = 4 // Giới hạn tối đa 4 worker để tránh quá tải
+	if env := os.Getenv("WORKER_MAX_JOBS"); env != "" {
+		if n, err := strconv.Atoi(env); err == nil && n > 0 {
+			maxWorkers = n
+		}
+	}
+	if maxWorkers > 2 {
+		maxWorkers = 2
 	}
 
-	// Giới hạn concurrent Demucs processes - Tối ưu cho 4 CPU cores
-	maxConcurrent := 3 // Tăng lên 3 để tận dụng tốt hơn 4 CPU cores
+	// Giới hạn concurrent processes bên trong worker: đọc ENV, mặc định 2
+	maxConcurrent := 2
+	if env := os.Getenv("WORKER_INTERNAL_CONCURRENCY"); env != "" {
+		if n, err := strconv.Atoi(env); err == nil && n > 0 {
+			maxConcurrent = n
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 

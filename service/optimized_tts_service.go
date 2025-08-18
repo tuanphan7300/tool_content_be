@@ -81,7 +81,7 @@ func InitOptimizedTTSService(apiKeyPath string, maxConcurrent int) (*OptimizedTT
 
 	// Tạo worker pool
 	if maxConcurrent <= 0 {
-		maxConcurrent = 15 // Mặc định 15 workers để match rate limit
+		maxConcurrent = 15 // Mặc định 15 workers để match rate limit (sẽ bị override bởi caller)
 	}
 
 	workerPool := make(chan struct{}, maxConcurrent)
@@ -222,67 +222,57 @@ func (s *OptimizedTTSService) processTTSConcurrent(
 	return results
 }
 
-// processSingleSegment xử lý một segment đơn lẻ
-func (s *OptimizedTTSService) processSingleSegment(
-	entry SRTEntry,
-	index int,
-	tempDir string,
-	options TTSProcessingOptions,
-	jobID string,
-) *TTSProcessingResult {
+// processSingleSegment xử lý một segment TTS
+func (s *OptimizedTTSService) processSingleSegment(entry SRTEntry, index int, tempDir string, options TTSProcessingOptions, jobID string) *TTSProcessingResult {
 	startTime := time.Now()
-	result := &TTSProcessingResult{
-		SegmentIndex: index,
-	}
-
-	// Chờ rate limiter
-	if !s.rateLimiter.WaitForSlot(30 * time.Second) {
-		result.Error = fmt.Errorf("timeout waiting for rate limit slot")
-		return result
-	}
-
-	// Reserve slot
-	if !s.rateLimiter.ReserveSlot(options.UserID, entry.Text, fmt.Sprintf("%s_%d", jobID, index)) {
-		result.Error = fmt.Errorf("failed to reserve rate limit slot")
-		return result
-	}
+	result := &TTSProcessingResult{SegmentIndex: index}
 
 	// Gọi Google TTS API
 	audioContent, err := s.callGoogleTTS(entry.Text, options)
 	if err != nil {
-		result.Error = fmt.Errorf("Google TTS API call failed: %v", err)
-		s.updateSegmentMapping(jobID, index, map[string]interface{}{"error": result.Error})
+		result.Error = err
+		s.updateSegmentMapping(jobID, index, map[string]interface{}{
+			"status":          "failed",
+			"error":           err.Error(),
+			"processing_time": time.Since(startTime),
+		})
 		return result
 	}
 
-	// Lưu audio content
-	segmentFile := filepath.Join(tempDir, fmt.Sprintf("segment_%d.mp3", index))
-	err = os.WriteFile(segmentFile, audioContent, 0644)
+	// Lưu MP3 tạm
+	mp3Path := filepath.Join(tempDir, fmt.Sprintf("segment_%d.mp3", index))
+	if err := os.WriteFile(mp3Path, audioContent, 0644); err != nil {
+		result.Error = fmt.Errorf("failed to write MP3: %v", err)
+		s.updateSegmentMapping(jobID, index, map[string]interface{}{
+			"status":          "failed",
+			"error":           err.Error(),
+			"processing_time": time.Since(startTime),
+		})
+		return result
+	}
+
+	// Xử lý audio segment (MP3 -> WAV, đo duration, apply volume)
+	wavPath, duration, err := s.processAudioSegment(mp3Path, tempDir, index, options)
 	if err != nil {
-		result.Error = fmt.Errorf("failed to save segment file: %v", err)
-		s.updateSegmentMapping(jobID, index, map[string]interface{}{"error": result.Error})
+		result.Error = err
+		s.updateSegmentMapping(jobID, index, map[string]interface{}{
+			"status":          "failed",
+			"error":           err.Error(),
+			"processing_time": time.Since(startTime),
+		})
 		return result
 	}
-
-	// Convert to WAV và xử lý audio
-	wavPath, duration, err := s.processAudioSegment(segmentFile, tempDir, index, options)
-	if err != nil {
-		result.Error = fmt.Errorf("audio processing failed: %v", err)
-		s.updateSegmentMapping(jobID, index, map[string]interface{}{"error": result.Error})
-		return result
-	}
-
-	// Cập nhật mapping
-	s.updateSegmentMapping(jobID, index, map[string]interface{}{
-		"google_api_resp": string(audioContent),
-		"audio_duration":  duration,
-		"adjusted_path":   wavPath,
-		"processing_time": time.Since(startTime),
-	})
 
 	result.AudioPath = wavPath
 	result.Duration = duration
 	result.ProcessingTime = time.Since(startTime)
+
+	s.updateSegmentMapping(jobID, index, map[string]interface{}{
+		"status":          "completed",
+		"audio_path":      wavPath,
+		"duration":        duration,
+		"processing_time": time.Since(startTime),
+	})
 
 	log.Printf("Segment %d processed successfully in %v", index, result.ProcessingTime)
 	return result
@@ -333,6 +323,7 @@ func (s *OptimizedTTSService) processAudioSegment(
 		"-ar", "44100",
 		"-ac", "2",
 		"-acodec", "pcm_s16le",
+		"-threads", "2",
 		"-y",
 		wavPath)
 
@@ -380,6 +371,7 @@ func (s *OptimizedTTSService) createFinalAudio(
 			"-ar", "44100",
 			"-ac", "2",
 			"-acodec", "pcm_s16le",
+			"-threads", "2",
 			"-y",
 			delayedFile)
 
@@ -396,7 +388,7 @@ func (s *OptimizedTTSService) createFinalAudio(
 		return fmt.Errorf("no valid segments to process")
 	}
 
-	// Mix tất cả delayed files
+	// Mix tất cả delayed files theo batch để đảm bảo hiệu năng, giữ nguyên thời điểm do đã adelay
 	return s.mixAudioFiles(delayedFiles, outputPath)
 }
 
@@ -412,6 +404,7 @@ func (s *OptimizedTTSService) mixAudioFiles(inputFiles []string, outputPath stri
 			"-i", inputFiles[0],
 			"-acodec", "libmp3lame",
 			"-b:a", "192k",
+			"-threads", "2",
 			"-y",
 			outputPath)
 
@@ -422,14 +415,75 @@ func (s *OptimizedTTSService) mixAudioFiles(inputFiles []string, outputPath stri
 		return nil
 	}
 
-	// Mix nhiều files
-	args := []string{"-i"}
-	args = append(args, inputFiles[0])
-	for _, file := range inputFiles[1:] {
-		args = append(args, "-i", file)
+	const batchSize = 32
+	if len(inputFiles) <= batchSize {
+		// Mix trực tiếp nếu số lượng vừa phải
+		args := []string{"-i"}
+		args = append(args, inputFiles[0])
+		for _, file := range inputFiles[1:] {
+			args = append(args, "-i", file)
+		}
+		filter := fmt.Sprintf("amix=inputs=%d:duration=longest:normalize=0[out]", len(inputFiles))
+		args = append(args,
+			"-filter_complex", filter,
+			"-map", "[out]",
+			"-ar", "44100",
+			"-ac", "2",
+			"-acodec", "libmp3lame",
+			"-b:a", "192k",
+			"-threads", "2",
+			"-y",
+			outputPath)
+
+		cmd := exec.Command("ffmpeg", args...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("FFmpeg mix failed: %s", string(output))
+		}
+		return nil
 	}
 
-	filter := fmt.Sprintf("amix=inputs=%d:duration=longest:normalize=0[out]", len(inputFiles))
+	// Batch mixing: tạo các batch WAV trung gian, sau đó amix các batch -> MP3 cuối
+	tempDir := filepath.Dir(outputPath)
+	var batchOutputs []string
+	for i := 0; i < len(inputFiles); i += batchSize {
+		end := i + batchSize
+		if end > len(inputFiles) {
+			end = len(inputFiles)
+		}
+		batch := inputFiles[i:end]
+		batchOut := filepath.Join(tempDir, fmt.Sprintf("batch_mix_%d.wav", i/batchSize))
+
+		args := []string{"-i"}
+		args = append(args, batch[0])
+		for _, file := range batch[1:] {
+			args = append(args, "-i", file)
+		}
+		filter := fmt.Sprintf("amix=inputs=%d:duration=longest:normalize=0[out]", len(batch))
+		args = append(args,
+			"-filter_complex", filter,
+			"-map", "[out]",
+			"-ar", "44100",
+			"-ac", "2",
+			"-acodec", "pcm_s16le",
+			"-threads", "2",
+			"-y",
+			batchOut)
+
+		cmd := exec.Command("ffmpeg", args...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("FFmpeg batch mix failed: %s", string(output))
+		}
+		batchOutputs = append(batchOutputs, batchOut)
+	}
+
+	args := []string{"-i"}
+	args = append(args, batchOutputs[0])
+	for _, file := range batchOutputs[1:] {
+		args = append(args, "-i", file)
+	}
+	filter := fmt.Sprintf("amix=inputs=%d:duration=longest:normalize=0[out]", len(batchOutputs))
 	args = append(args,
 		"-filter_complex", filter,
 		"-map", "[out]",
@@ -437,13 +491,14 @@ func (s *OptimizedTTSService) mixAudioFiles(inputFiles []string, outputPath stri
 		"-ac", "2",
 		"-acodec", "libmp3lame",
 		"-b:a", "192k",
+		"-threads", "2",
 		"-y",
 		outputPath)
 
 	cmd := exec.Command("ffmpeg", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("FFmpeg mix failed: %s", string(output))
+		return fmt.Errorf("FFmpeg final batch mix failed: %s", string(output))
 	}
 
 	return nil

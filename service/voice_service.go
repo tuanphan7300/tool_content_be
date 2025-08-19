@@ -335,7 +335,12 @@ func BurnSubtitleWithBackground(videoPath, srtPath, outputDir string, textColor,
 	escapedSrtPath := strings.ReplaceAll(absSrtPath, "'", "\\'")
 	cmd := exec.Command("ffmpeg",
 		"-i", videoPath,
-		"-vf", fmt.Sprintf("subtitles='%s':force_style='Fontsize=24,PrimaryColour=%s,BackColour=%s,Outline=2,Shadow=0,BorderStyle=3'", escapedSrtPath, textColorASS, bgColorASS),
+		"-vf", fmt.Sprintf("subtitles='%s':force_style='Fontsize=24,PrimaryColour=%s,BackColour=%s,Outline=2,Shadow=0,BorderStyle=3',scale=-2:720", escapedSrtPath, textColorASS, bgColorASS),
+		"-c:v", "libx264",
+		"-preset", "veryfast",
+		"-crf", "23",
+		"-pix_fmt", "yuv420p",
+		"-movflags", "+faststart",
 		"-c:a", "copy", // Copy audio without re-encoding
 		"-y", // Overwrite output file
 		outputPath,

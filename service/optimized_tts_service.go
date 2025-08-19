@@ -81,7 +81,7 @@ func InitOptimizedTTSService(apiKeyPath string, maxConcurrent int) (*OptimizedTT
 
 	// Tạo worker pool
 	if maxConcurrent <= 0 {
-		maxConcurrent = 15 // Mặc định 15 workers để match rate limit
+		maxConcurrent = 6 // Mặc định 6 workers để tránh oversubscription trên máy ít CPU
 	}
 
 	workerPool := make(chan struct{}, maxConcurrent)
@@ -138,7 +138,7 @@ func (s *OptimizedTTSService) ProcessSRTConcurrent(
 	}
 	defer os.RemoveAll(tempDir)
 
-	log.Printf("⚡ [OPTIMIZED TTS] Khởi động %d concurrent workers để xử lý TTS...", len(entries))
+	log.Printf("⚡ [OPTIMIZED TTS] Khởi động %d tasks để xử lý TTS (pool size: %d)...", len(entries), s.maxConcurrent)
 	// Xử lý TTS với concurrent workers
 	results := s.processTTSConcurrent(entries, tempDir, options, jobID)
 
@@ -179,7 +179,7 @@ func (s *OptimizedTTSService) processTTSConcurrent(
 	options TTSProcessingOptions,
 	jobID string,
 ) []*TTSProcessingResult {
-	log.Printf("🔄 [OPTIMIZED TTS] Bắt đầu concurrent processing với %d workers (pool size: %d)", len(entries), s.maxConcurrent)
+	log.Printf("🔄 [OPTIMIZED TTS] Bắt đầu concurrent processing: tasks=%d, pool=%d", len(entries), s.maxConcurrent)
 
 	results := make([]*TTSProcessingResult, len(entries))
 	var wg sync.WaitGroup
@@ -396,7 +396,13 @@ func (s *OptimizedTTSService) createFinalAudio(
 		return fmt.Errorf("no valid segments to process")
 	}
 
-	// Mix tất cả delayed files
+	// Chọn chiến lược mix: nếu số lượng file lớn, mix theo batch để tránh amix quá nhiều input cùng lúc
+	const defaultBatchSize = 30
+	if len(delayedFiles) > defaultBatchSize {
+		return s.mixAudioFilesInBatches(delayedFiles, outputPath, tempDir, defaultBatchSize)
+	}
+
+	// Mix trực tiếp nếu số lượng nhỏ
 	return s.mixAudioFiles(delayedFiles, outputPath)
 }
 
@@ -444,6 +450,96 @@ func (s *OptimizedTTSService) mixAudioFiles(inputFiles []string, outputPath stri
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("FFmpeg mix failed: %s", string(output))
+	}
+
+	return nil
+}
+
+// mixAudioFilesInBatches trộn nhiều file audio theo lô để giảm độ phức tạp khi số input rất lớn
+func (s *OptimizedTTSService) mixAudioFilesInBatches(inputFiles []string, outputPath string, tempDir string, batchSize int) error {
+	if len(inputFiles) == 0 {
+		return fmt.Errorf("no input files to mix")
+	}
+
+	if batchSize <= 1 {
+		batchSize = 30
+	}
+
+	if len(inputFiles) <= batchSize {
+		return s.mixAudioFiles(inputFiles, outputPath)
+	}
+
+	var batchFiles []string
+	for i := 0; i < len(inputFiles); i += batchSize {
+		end := i + batchSize
+		if end > len(inputFiles) {
+			end = len(inputFiles)
+		}
+
+		chunk := inputFiles[i:end]
+		batchFile := filepath.Join(tempDir, fmt.Sprintf("batch_mix_%d.wav", i/batchSize))
+
+		args := []string{}
+		for _, file := range chunk {
+			args = append(args, "-i", file)
+		}
+
+		filter := fmt.Sprintf("amix=inputs=%d:duration=longest:normalize=0[out]", len(chunk))
+		args = append(args,
+			"-filter_complex", filter,
+			"-map", "[out]",
+			"-ar", "44100",
+			"-ac", "2",
+			"-acodec", "pcm_s16le",
+			"-y",
+			batchFile,
+		)
+
+		cmd := exec.Command("ffmpeg", args...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("FFmpeg batch mix failed: %s", string(output))
+		}
+
+		batchFiles = append(batchFiles, batchFile)
+	}
+
+	if len(batchFiles) == 1 {
+		cmd := exec.Command("ffmpeg",
+			"-i", batchFiles[0],
+			"-acodec", "libmp3lame",
+			"-b:a", "192k",
+			"-y",
+			outputPath,
+		)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("FFmpeg final convert failed: %s", string(output))
+		}
+		return nil
+	}
+
+	args := []string{}
+	for _, file := range batchFiles {
+		args = append(args, "-i", file)
+	}
+
+	filter := fmt.Sprintf("amix=inputs=%d:duration=longest:normalize=0[out]", len(batchFiles))
+	args = append(args,
+		"-filter_complex", filter,
+		"-map", "[out]",
+		"-ar", "44100",
+		"-ac", "2",
+		"-acodec", "libmp3lame",
+		"-b:a", "192k",
+		"-y",
+		outputPath,
+	)
+
+	cmd := exec.Command("ffmpeg", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("FFmpeg final batch mix failed: %s", string(output))
 	}
 
 	return nil

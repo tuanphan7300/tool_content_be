@@ -383,6 +383,8 @@ func (ws *WorkerService) runProcessVideo(job *AudioProcessingJob) (string, error
 	task.BackgroundVolume = job.BackgroundVolume
 	task.TTSVolume = job.TTSVolume
 	task.SpeakingRate = job.SpeakingRate
+	task.BackgroundQuality = job.BackgroundQuality
+	log.Printf("🎚️ [WORKER SERVICE] background_quality=%s (job=%s)", task.BackgroundQuality, job.ID)
 
 	log.Printf("🎬 [WORKER SERVICE] Bắt đầu parallel processing với ProcessParallel()...")
 	// Xử lý song song

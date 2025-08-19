@@ -86,22 +86,23 @@ func (p *ParallelProcessor) GetAllTasks() map[string]*ProcessingTask {
 
 // ProcessVideoParallel xử lý video song song
 type ProcessVideoParallel struct {
-	VideoPath        string
-	AudioPath        string
-	VideoDir         string
-	TargetLanguage   string
-	SubtitleColor    string
-	SubtitleBgColor  string
-	BackgroundVolume float64
-	TTSVolume        float64
-	SpeakingRate     float64
-	HasCustomSrt     bool
-	CustomSrtPath    string
-	Processor        *ParallelProcessor
-	APIKey           string
-	GeminiKey        string
-	CacheService     *CacheService
-	PricingService   *PricingService
+	VideoPath         string
+	AudioPath         string
+	VideoDir          string
+	TargetLanguage    string
+	SubtitleColor     string
+	SubtitleBgColor   string
+	BackgroundVolume  float64
+	TTSVolume         float64
+	SpeakingRate      float64
+	HasCustomSrt      bool
+	CustomSrtPath     string
+	Processor         *ParallelProcessor
+	APIKey            string
+	GeminiKey         string
+	CacheService      *CacheService
+	PricingService    *PricingService
+	BackgroundQuality string // "quality" (default), "ducking", "fast"
 }
 
 // NewProcessVideoParallel tạo processor mới
@@ -199,7 +200,7 @@ func (p *ProcessVideoParallel) ProcessParallel() (*ProcessVideoResult, error) {
 	translationResult, err := p.processTranslation(whisperResult)
 	if err != nil {
 		p.Processor.UpdateTaskProgress("translation", 0, "failed")
-		return nil, fmt.Errorf("Lỗi dịch thuật: %v", err)
+		return nil, fmt.Errorf("lỗi dịch thuật: %v", err)
 	}
 	p.Processor.UpdateTaskProgress("translation", 100, "completed")
 	log.Printf("✅ [PARALLEL PROCESSING] Translation completed successfully")
@@ -212,7 +213,7 @@ func (p *ProcessVideoParallel) ProcessParallel() (*ProcessVideoResult, error) {
 	ttsResult, err := p.processTTS(translationResult)
 	if err != nil {
 		p.Processor.UpdateTaskProgress("tts", 0, "failed")
-		return nil, fmt.Errorf("Lỗi TTS: %v", err)
+		return nil, fmt.Errorf("lỗi TTS: %v", err)
 	}
 	p.Processor.UpdateTaskProgress("tts", 100, "completed")
 	log.Printf("✅ [PARALLEL PROCESSING] TTS completed successfully")
@@ -225,7 +226,7 @@ func (p *ProcessVideoParallel) ProcessParallel() (*ProcessVideoResult, error) {
 	videoResult, err := p.processVideo(ttsResult, backgroundResult, translationResult)
 	if err != nil {
 		p.Processor.UpdateTaskProgress("video", 0, "failed")
-		return nil, fmt.Errorf("Lỗi video processing: %v", err)
+		return nil, fmt.Errorf("lỗi video processing: %v", err)
 	}
 	p.Processor.UpdateTaskProgress("video", 100, "completed")
 	log.Printf("✅ [PARALLEL PROCESSING] Video processing completed successfully")
@@ -339,6 +340,12 @@ func (p *ProcessVideoParallel) processWhisper() (*WhisperResult, error) {
 func (p *ProcessVideoParallel) processBackground() (*BackgroundResult, error) {
 	log.Printf("Processing background extraction...")
 
+	// If using ducking mode, we do NOT separate. We use original audio to duck voice+music properly.
+	if strings.ToLower(p.BackgroundQuality) == "ducking" {
+		log.Printf("[BACKGROUND] Ducking mode detected -> skip separation, use original audio")
+		return &BackgroundResult{Path: p.AudioPath}, nil
+	}
+
 	// Kiểm tra cache trước
 	if cachedPath, err := p.CacheService.GetCachedBackgroundResult(p.AudioPath); err == nil {
 		log.Printf("Using cached background result")
@@ -445,12 +452,20 @@ func (p *ProcessVideoParallel) processTTS(translationResult *TranslationResult) 
 // processVideo xử lý video cuối cùng
 func (p *ProcessVideoParallel) processVideo(ttsResult *TTSResult, backgroundResult *BackgroundResult, translationResult *TranslationResult) (*ProcessVideoResult, error) {
 	log.Printf("Processing final video...")
+	log.Printf("[VIDEO] background_quality=%s", strings.ToLower(p.BackgroundQuality))
 
 	// Merge video với audio
-	mergedPath, err := MergeVideoWithAudio(p.VideoPath, backgroundResult.Path, ttsResult.TTSPath, p.VideoDir, p.BackgroundVolume, p.TTSVolume)
+	var mergedPath string
+	var err error
+	if strings.ToLower(p.BackgroundQuality) == "ducking" {
+		mergedPath, err = MergeVideoWithAudioDucking(p.VideoPath, backgroundResult.Path, ttsResult.TTSPath, p.VideoDir, p.BackgroundVolume, p.TTSVolume)
+	} else {
+		mergedPath, err = MergeVideoWithAudio(p.VideoPath, backgroundResult.Path, ttsResult.TTSPath, p.VideoDir, p.BackgroundVolume, p.TTSVolume)
+	}
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("[VIDEO] merged path: %s", mergedPath)
 
 	// Burn subtitle
 	finalPath := mergedPath
@@ -462,6 +477,7 @@ func (p *ProcessVideoParallel) processVideo(ttsResult *TTSResult, backgroundResu
 			finalPath = burnedPath
 		}
 	}
+	log.Printf("[VIDEO] final path (after burn): %s", finalPath)
 
 	return &ProcessVideoResult{
 		FinalVideoPath:    finalPath,

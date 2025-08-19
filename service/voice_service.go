@@ -129,7 +129,7 @@ func separateAudio(audioPath string, fileName string, stemType string, videoDir 
 	htdemucsDir := filepath.Join(outputDir, "htdemucs")
 	subDirs, err := os.ReadDir(htdemucsDir)
 	if err != nil || len(subDirs) == 0 {
-		return "", fmt.Errorf("Demucs output folder not found: %v", err)
+		return "", fmt.Errorf("demucs output folder not found: %v", err)
 	}
 	actualSubDir := subDirs[0].Name()
 	stemPath := filepath.Join(htdemucsDir, actualSubDir, stemType+".wav")
@@ -272,6 +272,67 @@ func MergeVideoWithAudio(videoPath, backgroundMusicPath, ttsPath, videoDir strin
 	return outputPath, nil
 }
 
+// MergeVideoWithAudioDucking merges video with background (original or no_vocals) and TTS using sidechain ducking
+func MergeVideoWithAudioDucking(videoPath, backgroundMusicPath, ttsPath, videoDir string, backgroundVolume, ttsVolume float64) (string, error) {
+	log.Printf("MergeVideoWithAudioDucking called - background ducking enabled")
+
+	// Create output directory if it doesn't exist
+	outputDir := filepath.Join(videoDir, "merged")
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create output directory: %v", err)
+	}
+
+	// Generate output filename with timestamp
+	timestamp := time.Now().Format("20060102_150405")
+	outputPath := filepath.Join(outputDir, fmt.Sprintf("merged_ducking_%s.mp4", timestamp))
+
+	// Get video duration to pad background
+	videoDurationCmd := exec.Command("ffprobe",
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		videoPath)
+	videoDurationOutput, err := videoDurationCmd.Output()
+	if err != nil {
+		log.Printf("Error getting video duration: %v", err)
+	}
+
+	// Build filter with sidechaincompress ducking
+	// bg: adjust volume + pad to full duration
+	// tts: boost volume
+	// sidechaincompress: use tts as key to duck bg
+	// then amix to single audio
+	filterComplex := fmt.Sprintf(
+		"[1:a]volume=%.2f,apad=whole_dur=%s[bg];[2:a]volume=%.2f[tts];[bg][tts]sidechaincompress=threshold=0.05:ratio=12:attack=5:release=180[bgduck];[bgduck][tts]amix=inputs=2:duration=longest:normalize=0[audio]",
+		backgroundVolume, strings.TrimSpace(string(videoDurationOutput)), ttsVolume,
+	)
+
+	cmd := exec.Command("ffmpeg",
+		"-i", videoPath,
+		"-i", backgroundMusicPath,
+		"-i", ttsPath,
+		"-filter_complex", filterComplex,
+		"-map", "0:v",
+		"-map", "[audio]",
+		"-c:v", "copy",
+		"-c:a", "aac",
+		"-b:a", "192k",
+		"-shortest",
+		"-avoid_negative_ts", "make_zero",
+		"-fflags", "+genpts",
+		"-y",
+		outputPath,
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("FFmpeg merge ducking error: %s", string(output))
+		return "", fmt.Errorf("failed to merge with ducking: %v", err)
+	}
+
+	return outputPath, nil
+}
+
 // BurnSubtitleWithBackground burns subtitle into video with solid background box
 func BurnSubtitleWithBackground(videoPath, srtPath, outputDir string, textColor, bgColor string) (string, error) {
 	// Create output directory if it doesn't exist
@@ -281,12 +342,12 @@ func BurnSubtitleWithBackground(videoPath, srtPath, outputDir string, textColor,
 
 	// Check if SRT file exists
 	if _, err := os.Stat(srtPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("SRT file not found: %s", srtPath)
+		return "", fmt.Errorf("srt file not found: %s", srtPath)
 	}
 
 	// Check if video file exists
 	if _, err := os.Stat(videoPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("Video file not found: %s", videoPath)
+		return "", fmt.Errorf("video file not found: %s", videoPath)
 	}
 
 	// Simple validation: check if SRT file starts with a number (index)

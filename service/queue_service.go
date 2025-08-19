@@ -29,13 +29,14 @@ type AudioProcessingJob struct {
 	SubtitleBgColor string  `json:"subtitle_bgcolor"`
 
 	// Additional fields for process-video
-	TargetLanguage   string  `json:"target_language"`
-	ServiceName      string  `json:"service_name"`
-	HasCustomSrt     bool    `json:"has_custom_srt"`
-	CustomSrtPath    string  `json:"custom_srt_path"`
-	BackgroundVolume float64 `json:"background_volume"`
-	TTSVolume        float64 `json:"tts_volume"`
-	SpeakingRate     float64 `json:"speaking_rate"`
+	TargetLanguage    string  `json:"target_language"`
+	ServiceName       string  `json:"service_name"`
+	HasCustomSrt      bool    `json:"has_custom_srt"`
+	CustomSrtPath     string  `json:"custom_srt_path"`
+	BackgroundVolume  float64 `json:"background_volume"`
+	TTSVolume         float64 `json:"tts_volume"`
+	SpeakingRate      float64 `json:"speaking_rate"`
+	BackgroundQuality string  `json:"background_quality"` // "quality" (default), "ducking", "fast"
 }
 
 type QueueService struct {

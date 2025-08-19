@@ -1912,6 +1912,12 @@ func ProcessVideoAsyncHandler(c *gin.Context) {
 		}
 	}
 
+	// background quality mode: quality (default), ducking, fast
+	backgroundQuality := c.PostForm("background_quality")
+	if backgroundQuality == "" {
+		backgroundQuality = "quality"
+	}
+
 	// Tái sử dụng thư mục và file từ middleware
 	tempDir := c.GetString("temp_dir")
 	tempVideoPath := c.GetString("temp_video_path")
@@ -1968,24 +1974,25 @@ func ProcessVideoAsyncHandler(c *gin.Context) {
 	// Tạo job process-video và enqueue vào queue
 	jobID := fmt.Sprintf("processvideo_%d_%d", userID, time.Now().UnixNano())
 	job := &service.AudioProcessingJob{
-		ID:               jobID,
-		JobType:          "process-video",
-		UserID:           userID,
-		ProcessID:        processID,
-		FileName:         safeVideoName,
-		VideoDir:         videoDir,
-		AudioPath:        audioPath,
-		Priority:         5,
-		MaxDuration:      600, // 10 phút
-		TargetLanguage:   targetLanguage,
-		ServiceName:      serviceName,
-		SubtitleColor:    subtitleColor,
-		SubtitleBgColor:  subtitleBgColor,
-		HasCustomSrt:     hasCustomSrt,
-		CustomSrtPath:    customSrtPath,
-		BackgroundVolume: backgroundVolume,
-		TTSVolume:        ttsVolume,
-		SpeakingRate:     speakingRate,
+		ID:                jobID,
+		JobType:           "process-video",
+		UserID:            userID,
+		ProcessID:         processID,
+		FileName:          safeVideoName,
+		VideoDir:          videoDir,
+		AudioPath:         audioPath,
+		Priority:          5,
+		MaxDuration:       600, // 10 phút
+		TargetLanguage:    targetLanguage,
+		ServiceName:       serviceName,
+		SubtitleColor:     subtitleColor,
+		SubtitleBgColor:   subtitleBgColor,
+		HasCustomSrt:      hasCustomSrt,
+		CustomSrtPath:     customSrtPath,
+		BackgroundVolume:  backgroundVolume,
+		TTSVolume:         ttsVolume,
+		SpeakingRate:      speakingRate,
+		BackgroundQuality: backgroundQuality,
 	}
 
 	queueService := service.GetQueueService()

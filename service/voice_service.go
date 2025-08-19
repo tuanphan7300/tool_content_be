@@ -222,11 +222,17 @@ func MergeVideoWithAudio(videoPath, backgroundMusicPath, ttsPath, videoDir strin
 	}
 
 	// Create a complex filter để mix audio với volume tuỳ chỉnh và đảm bảo đồng bộ
+	// Áp dụng boost tuyến tính nhẹ cho TTS để mặc định rõ hơn nhưng vẫn giữ ý nghĩa tham số đầu vào
+	effectiveTTSVolume := ttsVolume * 1.2
+	log.Printf("Effective TTS volume after boost: %.2f (from input %.2f)", effectiveTTSVolume, ttsVolume)
+	// Áp dụng boost tuyến tính nhẹ cho nhạc nền để mặc định rõ hơn nhưng vẫn giữ ý nghĩa tham số đầu vào
+	effectiveBGVolume := backgroundVolume * 1.2
+	log.Printf("Effective BG volume after boost: %.2f (from input %.2f)", effectiveBGVolume, backgroundVolume)
 	// Sử dụng apad để đảm bảo background music có đủ độ dài
 	// Thêm normalize=0 để tránh amix tự động normalize volume
 	filterComplex := fmt.Sprintf(
 		"[1:a]volume=%.2f,apad=whole_dur=%s[bg];[2:a]volume=%.2f[tts];[bg][tts]amix=inputs=2:duration=longest:normalize=0[audio]",
-		backgroundVolume, strings.TrimSpace(string(videoDurationOutput)), ttsVolume,
+		effectiveBGVolume, strings.TrimSpace(string(videoDurationOutput)), effectiveTTSVolume,
 	)
 
 	log.Printf("FFmpeg filter complex: %s", filterComplex)

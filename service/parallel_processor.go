@@ -479,7 +479,7 @@ func (p *ProcessVideoParallel) processTTSWithOptimizedService(srtContent, target
 	log.Printf("Processing TTS with Optimized TTS Service...")
 
 	// Khởi tạo Optimized TTS Service
-	ttsService, err := InitOptimizedTTSService("data/google_clound_tts_api.json", 15)
+	ttsService, err := InitOptimizedTTSService("data/google_clound_tts_api.json", 6)
 	if err != nil {
 		log.Printf("Failed to initialize Optimized TTS Service, falling back to old TTS: %v", err)
 		// Fallback về TTS cũ nếu không thể khởi tạo service mới
@@ -498,7 +498,7 @@ func (p *ProcessVideoParallel) processTTSWithOptimizedService(srtContent, target
 		BackgroundVolume: p.BackgroundVolume,
 		TTSVolume:        p.TTSVolume,
 		SpeakingRate:     p.SpeakingRate,
-		MaxConcurrent:    15,
+		MaxConcurrent:    6,
 		UserID:           0, // Không có user ID trong context này
 	}
 

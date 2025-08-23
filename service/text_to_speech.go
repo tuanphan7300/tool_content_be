@@ -32,6 +32,55 @@ type SRTEntry struct {
 	Text  string
 }
 
+// VoiceOption đại diện cho một tùy chọn giọng đọc
+type VoiceOption struct {
+	Name         string `json:"name"`
+	DisplayName  string `json:"display_name"`
+	Gender       string `json:"gender"`
+	LanguageCode string `json:"language_code"`
+	Quality      string `json:"quality"` // standard, wavenet, neural2
+}
+
+// GetAvailableVoices trả về danh sách giọng đọc có sẵn cho mỗi ngôn ngữ
+func GetAvailableVoices() map[string][]VoiceOption {
+	return map[string][]VoiceOption{
+		"vi": {
+			{Name: "vi-VN-Standard-A", DisplayName: "Giọng nữ chuẩn", Gender: "female", LanguageCode: "vi-VN", Quality: "standard"},
+			{Name: "vi-VN-Standard-B", DisplayName: "Giọng nam chuẩn", Gender: "male", LanguageCode: "vi-VN", Quality: "standard"},
+			{Name: "vi-VN-Wavenet-A", DisplayName: "Giọng nữ cao cấp", Gender: "female", LanguageCode: "vi-VN", Quality: "wavenet"},
+			{Name: "vi-VN-Wavenet-B", DisplayName: "Giọng nam cao cấp", Gender: "male", LanguageCode: "vi-VN", Quality: "wavenet"},
+			{Name: "vi-VN-Wavenet-C", DisplayName: "Giọng nữ tự nhiên", Gender: "female", LanguageCode: "vi-VN", Quality: "wavenet"},
+			{Name: "vi-VN-Wavenet-D", DisplayName: "Giọng nam tự nhiên", Gender: "male", LanguageCode: "vi-VN", Quality: "wavenet"},
+		},
+		"en": {
+			{Name: "en-US-Standard-A", DisplayName: "Female Standard", Gender: "female", LanguageCode: "en-US", Quality: "standard"},
+			{Name: "en-US-Standard-B", DisplayName: "Male Standard", Gender: "male", LanguageCode: "en-US", Quality: "standard"},
+			{Name: "en-US-Wavenet-A", DisplayName: "Female Premium", Gender: "female", LanguageCode: "en-US", Quality: "wavenet"},
+			{Name: "en-US-Wavenet-B", DisplayName: "Male Premium", Gender: "male", LanguageCode: "en-US", Quality: "wavenet"},
+			{Name: "en-US-Wavenet-F", DisplayName: "Female Natural", Gender: "female", LanguageCode: "en-US", Quality: "wavenet"},
+			{Name: "en-US-Wavenet-G", DisplayName: "Male Natural", Gender: "male", LanguageCode: "en-US", Quality: "wavenet"},
+		},
+		//"ja": {
+		//	{Name: "ja-JP-Standard-A", DisplayName: "Female Standard", Gender: "female", LanguageCode: "ja-JP", Quality: "standard"},
+		//	{Name: "ja-JP-Standard-B", DisplayName: "Male Standard", Gender: "male", LanguageCode: "ja-JP", Quality: "standard"},
+		//	{Name: "ja-JP-Wavenet-A", DisplayName: "Female Premium", Gender: "female", LanguageCode: "ja-JP", Quality: "wavenet"},
+		//	{Name: "ja-JP-Wavenet-B", DisplayName: "Male Premium", Gender: "male", LanguageCode: "ja-JP", Quality: "wavenet"},
+		//},
+		//"ko": {
+		//	{Name: "ko-KR-Standard-A", DisplayName: "Female Standard", Gender: "female", LanguageCode: "ko-KR", Quality: "standard"},
+		//	{Name: "ko-KR-Standard-B", DisplayName: "Male Standard", Gender: "male", LanguageCode: "ko-KR", Quality: "standard"},
+		//	{Name: "ko-KR-Wavenet-A", DisplayName: "Female Premium", Gender: "female", LanguageCode: "ko-KR", Quality: "wavenet"},
+		//	{Name: "ko-KR-Wavenet-B", DisplayName: "Male Premium", Gender: "male", LanguageCode: "ko-KR", Quality: "wavenet"},
+		//},
+		//"zh": {
+		//	{Name: "cmn-CN-Standard-A", DisplayName: "Female Standard", Gender: "female", LanguageCode: "cmn-CN", Quality: "standard"},
+		//	{Name: "cmn-CN-Standard-B", DisplayName: "Male Standard", Gender: "male", LanguageCode: "cmn-CN", Quality: "standard"},
+		//	{Name: "cmn-CN-Wavenet-A", DisplayName: "Female Premium", Gender: "female", LanguageCode: "cmn-CN", Quality: "wavenet"},
+		//	{Name: "cmn-CN-Wavenet-B", DisplayName: "Male Premium", Gender: "male", LanguageCode: "cmn-CN", Quality: "wavenet"},
+		//},
+	}
+}
+
 // TextToSpeech converts text to speech and returns the audio content
 func TextToSpeech(text string, options TTSOptions) (string, error) {
 	// Create output directory if it doesn't exist
@@ -271,8 +320,31 @@ func getVoiceForLanguage(languageCode string) (string, string) {
 	return "vi-VN", "vi-VN-Wavenet-C"
 }
 
+// getVoiceForLanguageWithSelection maps language codes to Google TTS voice settings with custom voice selection
+func getVoiceForLanguageWithSelection(languageCode string, voiceName string) (string, string) {
+	// Nếu có voice được chọn, validate và sử dụng
+	if voiceName != "" {
+		voices := GetAvailableVoices()
+		if languageVoices, exists := voices[languageCode]; exists {
+			for _, voice := range languageVoices {
+				if voice.Name == voiceName {
+					return voice.LanguageCode, voice.Name
+				}
+			}
+		}
+	}
+
+	// Fallback to default voice
+	return getVoiceForLanguage(languageCode)
+}
+
 // ConvertSRTToSpeechWithLanguage converts SRT content to speech with specified language
 func ConvertSRTToSpeechWithLanguage(srtContent string, videoDir string, speakingRate float64, targetLanguage string) (string, error) {
+	return ConvertSRTToSpeechWithLanguageAndVoice(srtContent, videoDir, speakingRate, targetLanguage, "")
+}
+
+// ConvertSRTToSpeechWithLanguageAndVoice converts SRT content to speech with specified language and voice
+func ConvertSRTToSpeechWithLanguageAndVoice(srtContent string, videoDir string, speakingRate float64, targetLanguage string, voiceName string) (string, error) {
 	// Clean SRT content first
 	srtContent = cleanSRTContent(srtContent)
 
@@ -300,9 +372,9 @@ func ConvertSRTToSpeechWithLanguage(srtContent string, videoDir string, speaking
 	defer client.Close()
 	log.Printf("Google TTS client created successfully")
 
-	// Get voice settings for target language
-	languageCode, voiceName := getVoiceForLanguage(targetLanguage)
-	log.Printf("Using voice: %s (%s) for language: %s", voiceName, languageCode, targetLanguage)
+	// Get voice settings for target language with voice selection
+	languageCode, selectedVoiceName := getVoiceForLanguageWithSelection(targetLanguage, voiceName)
+	log.Printf("Using voice: %s (%s) for language: %s", selectedVoiceName, languageCode, targetLanguage)
 
 	// Create a temporary directory for segment files
 	tempDir, err := os.MkdirTemp("", "tts_segments")
@@ -333,7 +405,7 @@ func ConvertSRTToSpeechWithLanguage(srtContent string, videoDir string, speaking
 			},
 			Voice: &texttospeechpb.VoiceSelectionParams{
 				LanguageCode: languageCode,
-				Name:         voiceName,
+				Name:         selectedVoiceName,
 			},
 			AudioConfig: &texttospeechpb.AudioConfig{
 				AudioEncoding:   texttospeechpb.AudioEncoding_MP3,

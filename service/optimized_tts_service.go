@@ -47,6 +47,7 @@ type TTSProcessingOptions struct {
 	SpeakingRate     float64
 	MaxConcurrent    int
 	UserID           uint
+	VoiceName        string // Thêm trường chọn giọng đọc
 }
 
 var (
@@ -290,8 +291,26 @@ func (s *OptimizedTTSService) processSingleSegment(
 
 // callGoogleTTS gọi Google TTS API
 func (s *OptimizedTTSService) callGoogleTTS(text string, options TTSProcessingOptions) ([]byte, error) {
-	// Lấy voice settings cho target language
-	languageCode, voiceName := getVoiceForLanguage(options.TargetLanguage)
+	// Lấy voice settings cho target language với voice selection
+	var languageCode, voiceName string
+	if options.VoiceName != "" {
+		// Sử dụng voice được chọn
+		voices := GetAvailableVoices()
+		if languageVoices, exists := voices[options.TargetLanguage]; exists {
+			for _, voice := range languageVoices {
+				if voice.Name == options.VoiceName {
+					languageCode = voice.LanguageCode
+					voiceName = voice.Name
+					break
+				}
+			}
+		}
+	}
+
+	// Fallback về default voice nếu không tìm thấy
+	if languageCode == "" || voiceName == "" {
+		languageCode, voiceName = getVoiceForLanguage(options.TargetLanguage)
+	}
 
 	// Tạo request
 	req := &texttospeechpb.SynthesizeSpeechRequest{

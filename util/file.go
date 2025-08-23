@@ -17,11 +17,6 @@ import (
 )
 
 func Processfile(c *gin.Context, file *multipart.FileHeader) (video, audio, fileVideoPath string, audioPath string, err error) {
-	if !isValidFile(file.Filename, file.Size) {
-		log.Error("Invalid file format or size")
-		return "", "", "", "", err
-	}
-
 	// Tạo folder storage
 	err = os.MkdirAll("storage", os.ModePerm)
 	if err != nil {
@@ -56,17 +51,6 @@ func Processfile(c *gin.Context, file *multipart.FileHeader) (video, audio, file
 
 }
 
-func isValidFile(filename string, size int64) bool {
-	ext := filepath.Ext(filename)
-	if ext != ".mp4" && ext != ".mov" {
-		return false
-	}
-	if size > 100*1024*1024 { // 100MB
-		return false
-	}
-	return true
-}
-
 // GetAudioDuration trả về duration (giây) của file audio/video
 func GetAudioDuration(filePath string) (float64, error) {
 	cmd := exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filePath)
@@ -84,10 +68,6 @@ func GetAudioDuration(filePath string) (float64, error) {
 
 // ProcessfileToDir lưu file và tách audio vào thư mục videoDir
 func ProcessfileToDir(c *gin.Context, file *multipart.FileHeader, videoDir string) (audioPath string, err error) {
-	if !isValidFile(file.Filename, file.Size) {
-		log.Error("Invalid file format or size")
-		return "", fmt.Errorf("Invalid file format or size")
-	}
 	// Tạo folder videoDir
 	err = os.MkdirAll(videoDir, os.ModePerm)
 	if err != nil {

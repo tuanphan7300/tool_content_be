@@ -19,169 +19,6 @@ import (
 	"gorm.io/datatypes"
 )
 
-func ProcessHandler(c *gin.Context) {
-	// Lấy file trước để kiểm tra sớm
-	file, err := c.FormFile("file")
-	if err != nil {
-		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
-		return
-	}
-
-	// Kiểm tra kích thước file không quá 100MB
-	if file.Size > 100*1024*1024 {
-		util.HandleError(c, http.StatusBadRequest, util.ErrFileTooLarge, nil)
-		return
-	}
-
-	// Tạo thư mục tạm để kiểm tra duration
-	timestamp := time.Now().UnixNano()
-	baseName := strings.TrimSuffix(filepath.Base(file.Filename), filepath.Ext(file.Filename))
-	uniqueName := fmt.Sprintf("%d_%s%s", timestamp, baseName, filepath.Ext(file.Filename))
-	tempDir := filepath.Join("./storage", strings.TrimSuffix(uniqueName, filepath.Ext(uniqueName)))
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		util.HandleError(c, http.StatusInternalServerError, util.ErrDirectoryCreation, err)
-		return
-	}
-
-	// Lưu file tạm để kiểm tra duration
-	tempVideoPath := filepath.Join(tempDir, uniqueName)
-	if err := c.SaveUploadedFile(file, tempVideoPath); err != nil {
-		util.CleanupDir(tempDir)
-		util.HandleError(c, http.StatusInternalServerError, util.ErrFileUploadFailed, err)
-		return
-	}
-
-	// Tách audio tạm để kiểm tra duration
-	tempAudioPath, err := util.ProcessfileToDir(c, file, tempDir)
-	if err != nil {
-		util.CleanupDir(tempDir)
-		util.HandleError(c, http.StatusInternalServerError, util.ErrProcessingFailed, err)
-		return
-	}
-
-	// Kiểm tra duration < 7 phút
-	duration, _ := util.GetAudioDuration(tempAudioPath)
-	if duration > 420 {
-		util.CleanupDir(tempDir)
-		util.HandleError(c, http.StatusBadRequest, util.ErrFileDurationTooLong, nil)
-		return
-	}
-
-	// Nếu pass tất cả kiểm tra, tiếp tục xử lý
-	configg := config.InfaConfig{}
-	configg.LoadConfig()
-	apiKey := configg.ApiKey
-
-	// Lấy user_id từ token
-	userID := c.GetUint("user_id")
-	if userID == 0 {
-		util.CleanupDir(tempDir)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-		return
-	}
-
-	// Get target language parameter (default to Vietnamese if not provided)
-	targetLanguage := c.PostForm("target_language")
-	if targetLanguage == "" {
-		targetLanguage = "vi" // Default to Vietnamese
-	}
-
-	// Sử dụng thư mục tạm đã tạo
-	videoDir := tempDir
-	videoPath := tempVideoPath
-	audioPath := tempAudioPath
-
-	// Khởi tạo services
-	pricingService := service.NewPricingService()
-
-	// Lấy service config cho speech_to_text (Whisper)
-	whisperServiceName, whisperModelAPIName, err := pricingService.GetActiveServiceForType("speech_to_text")
-	if err != nil {
-		util.CleanupDir(videoDir)
-		util.HandleError(c, http.StatusInternalServerError, util.ErrServiceUnavailable, err)
-		return
-	}
-
-	// Lấy service config cho caption_generation (GPT)
-	gptServiceName, gptModelAPIName, err := pricingService.GetActiveServiceForType("caption_generation")
-	if err != nil {
-		util.CleanupDir(videoDir)
-		util.HandleError(c, http.StatusInternalServerError, util.ErrServiceUnavailable, err)
-		return
-	}
-
-	// Gọi Whisper để lấy transcript
-	transcript, segments, _, err := service.TranscribeWithService(audioPath, apiKey, whisperServiceName, whisperModelAPIName)
-	if err != nil {
-		util.CleanupDir(videoDir)
-		util.HandleError(c, http.StatusInternalServerError, util.ErrProcessingFailed, err)
-		return
-	}
-
-	// Token Whisper được dùng nội bộ cho phân tích, không còn cần lưu; bỏ tính để tránh cảnh báo linter
-
-	// Lưu history trước để lấy video_id
-	jsonData, _ := json.Marshal(segments)
-	captionHistory := config.CaptionHistory{
-		UserID:              userID,
-		VideoFilename:       videoPath,
-		VideoFilenameOrigin: file.Filename,
-		Transcript:          transcript,
-		Segments:            jsonData,
-		ProcessType:         "process",
-		CreatedAt:           time.Now(),
-	}
-	if err := config.Db.Create(&captionHistory).Error; err != nil {
-		util.CleanupDir(videoDir)
-		util.HandleError(c, http.StatusInternalServerError, util.ErrDatabaseOperation, err)
-		return
-	}
-
-	// Giới hạn 10 action gần nhất cho user
-	processService := service.NewProcessStatusService()
-	_ = processService.LimitUserCaptionHistories(userID)
-
-	// Lấy tổng số action hiện tại
-	var count int64
-	config.Db.Model(&config.CaptionHistory{}).Where("user_id = ?", userID).Count(&count)
-	deleteAt := captionHistory.CreatedAt.Add(24 * time.Hour)
-	var warning string
-	if count >= 9 {
-		warning = "Bạn chỉ được lưu tối đa 10 kết quả, kết quả cũ nhất sẽ bị xóa khi tạo mới."
-	}
-	if time.Until(deleteAt) < time.Hour {
-		warning = "Kết quả này sẽ bị xóa sau chưa đầy 1 giờ, hãy tải về nếu cần giữ lại."
-	}
-
-	// Gọi GPT để gợi ý caption & hashtag
-	captionsAndHashtag, err := service.GenerateCaptionWithService(transcript, apiKey, gptServiceName, gptModelAPIName, targetLanguage)
-	if err != nil {
-		util.CleanupDir(videoDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "GPT error"})
-		return
-	}
-
-	// Trừ token cho Gemini dịch (tính theo ký tự gửi lên)
-	jsonData, _ = json.Marshal(segments)
-	geminiTokens := int(float64(len(jsonData))/62.5 + 0.9999)
-	if geminiTokens < 1 {
-		geminiTokens = 1
-	}
-
-	// Update history
-	captionHistory.Suggestion = captionsAndHashtag
-	config.Db.Save(&captionHistory)
-
-	c.JSON(http.StatusOK, gin.H{
-		"transcript": transcript,
-		"suggestion": captionsAndHashtag,
-		"segments":   segments,
-		"id":         captionHistory.ID,
-		"delete_at":  deleteAt,
-		"warning":    warning,
-	})
-}
-
 func ProcessVideoHandler(c *gin.Context) {
 	configg := config.InfaConfig{}
 	configg.LoadConfig()
@@ -237,14 +74,6 @@ func ProcessVideoHandler(c *gin.Context) {
 		util.HandleError(c, http.StatusBadRequest, util.ErrFileUploadFailed, err)
 		return
 	}
-	// Kiểm tra kích thước file không quá 100MB
-	if file.Size > 100*1024*1024 {
-		if processID > 0 {
-			processService.UpdateProcessStatus(processID, "failed")
-		}
-		util.HandleError(c, http.StatusBadRequest, util.ErrFileTooLarge, nil)
-		return
-	}
 
 	// Tạo thư mục riêng cho video
 	timestamp := time.Now().UnixNano()
@@ -286,14 +115,6 @@ func ProcessVideoHandler(c *gin.Context) {
 	}
 	// Kiểm tra duration < 7 phút
 	duration, _ := util.GetAudioDuration(audioPath)
-	if duration > 420 {
-		if processID > 0 {
-			processService.UpdateProcessStatus(processID, "failed")
-		}
-		util.CleanupDir(videoDir)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 7 phút."})
-		return
-	}
 
 	// Check for custom SRT file
 	customSrtFile, err := c.FormFile("custom_srt")
@@ -1855,12 +1676,6 @@ func ProcessVideoAsyncHandler(c *gin.Context) {
 		return
 	}
 
-	// Kiểm tra kích thước file không quá 100MB
-	if videoFile.Size > 100*1024*1024 {
-		util.HandleError(c, http.StatusBadRequest, util.ErrFileTooLarge, nil)
-		return
-	}
-
 	// Lấy user_id từ token
 	userID := c.GetUint("user_id")
 	if userID == 0 {
@@ -1909,6 +1724,17 @@ func ProcessVideoAsyncHandler(c *gin.Context) {
 	if v := c.PostForm("speaking_rate"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			speakingRate = f
+		}
+	}
+
+	// Get voice selection parameter
+	voiceName := c.PostForm("voice_name")
+	if voiceName == "" {
+		// Default voice based on target language
+		if targetLanguage == "vi" {
+			voiceName = "vi-VN-Wavenet-C" // Default Vietnamese voice
+		} else if targetLanguage == "en" {
+			voiceName = "en-US-Wavenet-F" // Default English voice
 		}
 	}
 
@@ -1986,6 +1812,7 @@ func ProcessVideoAsyncHandler(c *gin.Context) {
 		BackgroundVolume: backgroundVolume,
 		TTSVolume:        ttsVolume,
 		SpeakingRate:     speakingRate,
+		VoiceName:        voiceName,
 	}
 
 	queueService := service.GetQueueService()

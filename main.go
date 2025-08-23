@@ -57,7 +57,8 @@ func main() {
 
 	// Khởi tạo TTS Rate Limiter
 	log.Println("Initializing TTS rate limiter...")
-	err = service.InitTTSRateLimiter("localhost:6379", "")
+	redisAdrr := "localhost:" + infaConfig.REDIS_PORT
+	err = service.InitTTSRateLimiter(redisAdrr, "")
 	if err != nil {
 		log.Printf("Warning: Failed to initialize TTS rate limiter: %v", err)
 		log.Println("TTS will continue without rate limiting")
@@ -66,6 +67,16 @@ func main() {
 	// Khởi tạo TTS Mapping Service
 	log.Println("Initializing TTS mapping service...")
 	service.InitTTSMappingService()
+
+	// Khởi tạo Voice Cache Service
+	log.Println("Initializing voice cache service...")
+	_, err = service.InitVoiceCacheService()
+	if err != nil {
+		log.Printf("Warning: Failed to initialize voice cache service: %v", err)
+		log.Println("Voice preview will continue without caching")
+	} else {
+		log.Println("Voice cache service initialized successfully")
+	}
 
 	// Chạy background cleanup routine
 	go func() {

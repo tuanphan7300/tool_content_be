@@ -178,7 +178,7 @@ func (vcs *VoiceCacheService) LoadVoiceSample(voice VoiceOption, language string
 		Quality:      voice.Quality,
 		SampleText:   vcs.GetSampleText(language),
 		AudioPath:    samplePath,
-		AudioURL:     fmt.Sprintf("http://localhost:8888/voice-samples/%s_sample.mp3", voice.Name),
+		AudioURL:     fmt.Sprintf("/voice-samples/%s_sample.mp3", voice.Name),
 		FileSize:     fileInfo.Size(),
 		CreatedAt:    fileInfo.ModTime(),
 	}
@@ -197,9 +197,9 @@ func (vcs *VoiceCacheService) GetVoiceSample(voiceName string) *VoiceSample {
 	defer vcs.mutex.RUnlock()
 
 	if sample, exists := vcs.samples[voiceName]; exists {
-		// Trả về full URL thay vì relative path
-		if !strings.HasPrefix(sample.AudioURL, "http") {
-			sample.AudioURL = "http://localhost:8888/voice-samples/" + filepath.Base(sample.AudioURL)
+		// Trả về URL tương đối để frontend tự xử lý domain
+		if strings.HasPrefix(sample.AudioURL, "http://localhost:8888") {
+			sample.AudioURL = "/voice-samples/" + filepath.Base(sample.AudioURL)
 		}
 		return sample
 	}
@@ -213,9 +213,9 @@ func (vcs *VoiceCacheService) GetAllVoiceSamples() []*VoiceSample {
 
 	var samples []*VoiceSample
 	for _, sample := range vcs.samples {
-		// Trả về full URL thay vì relative path
-		if !strings.HasPrefix(sample.AudioURL, "http") {
-			sample.AudioURL = "http://localhost:8888/voice-samples/" + filepath.Base(sample.AudioURL)
+		// Trả về URL tương đối để frontend tự xử lý domain
+		if strings.HasPrefix(sample.AudioURL, "http://localhost:8888") {
+			sample.AudioURL = "/voice-samples/" + filepath.Base(sample.AudioURL)
 		}
 		samples = append(samples, sample)
 	}

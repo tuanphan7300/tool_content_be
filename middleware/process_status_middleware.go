@@ -1,12 +1,14 @@
 package middleware
 
 import (
+	"creator-tool-backend/config"
 	"creator-tool-backend/service"
 	"creator-tool-backend/util"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +18,10 @@ import (
 
 // FileValidationMiddleware kiểm tra file size và duration trước khi tạo process status
 func FileValidationMiddleware() gin.HandlerFunc {
+	infaConfig := config.InfaConfig{}
+	infaConfig.LoadConfig()
+	size := infaConfig.MAX_FILE_SIZE
+	sizeInt, _ := strconv.ParseInt(size, 10, 64)
 	return func(c *gin.Context) {
 		// Lấy file video
 		videoFile, err := c.FormFile("file")
@@ -26,8 +32,8 @@ func FileValidationMiddleware() gin.HandlerFunc {
 		}
 
 		// Kiểm tra kích thước file không quá 100MB
-		if videoFile.Size > 100*1024*1024 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "File quá lớn. Chỉ cho phép file dưới 100MB."})
+		if videoFile.Size > sizeInt*1024*1024 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "File quá lớn. Chỉ cho phép file dưới 200MB."})
 			c.Abort()
 			return
 		}

@@ -23,6 +23,15 @@ func SetupRoutes(r *gin.Engine) {
 	r.POST("/login", handler.LoginHandler)
 	r.GET("/ping", handler.PingPongHandler)
 
+	// Test voice cache (public)
+	r.GET("/test-voices", handler.TestVoiceCacheHandler)
+
+	// Serve voice preview audio files
+	r.Static("/voice-preview", "./storage/voice_preview")
+
+	// Serve voice samples
+	r.Static("/voice-samples", "./storage/voice_samples")
+
 	// Health check routes
 	r.GET("/health", handler.HealthCheckHandler)
 
@@ -35,12 +44,7 @@ func SetupRoutes(r *gin.Engine) {
 	protected.Use(middleware.AuthMiddleware())
 	{
 		protected.GET("/user/profile", handler.GetUserProfileHandler)
-		protected.POST("/upload", handler.UploadHandler)
-		protected.POST("/process", middleware.ProcessAnyStatusMiddleware(), handler.ProcessHandler)
-		protected.POST("/generate-caption", handler.GenerateCaptionHandler)
 		protected.POST("/tiktok-optimize", middleware.FileValidationMiddleware(), middleware.ProcessAnyStatusMiddleware(), handler.TikTokOptimizerHandler)
-		protected.GET("/caption/:id", handler.CaptionHandler)
-		protected.GET("/suggest/:id", handler.SuggestHandler)
 		protected.POST("/save-history", handler.SaveHistory)
 		protected.GET("/history", handler.GetHistory)
 		protected.GET("/history/:id", handler.GetHistoryByID)
@@ -55,21 +59,17 @@ func SetupRoutes(r *gin.Engine) {
 		protected.POST("/process-video-async", middleware.FileValidationMiddleware(), middleware.ProcessAnyStatusMiddleware(), middleware.ProcessStatusMiddleware("process-video"), handler.ProcessVideoAsyncHandler)
 		protected.GET("/process/:process_id/progress", handler.GetProcessingProgressHandler)
 
-		// Cache management endpoints
-		protected.GET("/cache/stats", handler.GetCacheStatsHandler)
-		protected.POST("/cache/cleanup", handler.CleanupCacheHandler)
-		protected.DELETE("/cache/entry/:key", handler.DeleteCacheEntryHandler)
-		protected.GET("/cache/entry/:key", handler.GetCacheEntryHandler)
-		protected.DELETE("/cache/all", handler.ClearAllCacheHandler)
-		protected.PUT("/cache/entry/:key/ttl", handler.SetCacheTTLHandler)
-		protected.POST("/text-to-speech", handler.TextToSpeechHandler)
-
 		// Optimized TTS endpoints
 		protected.POST("/optimized-tts", handler.OptimizedTTSHandler)
 		protected.GET("/optimized-tts/:job_id/progress", handler.GetOptimizedTTSProgress)
 		protected.GET("/optimized-tts/:job_id/result", handler.GetOptimizedTTSResult)
 		protected.DELETE("/optimized-tts/:job_id", handler.CancelOptimizedTTSJob)
 		protected.GET("/optimized-tts/stats", handler.GetOptimizedTTSStatistics)
+
+		// Voice selection endpoints
+		protected.GET("/voices", handler.GetAvailableVoicesHandler)
+		protected.POST("/voice-preview", handler.VoicePreviewHandler)
+		protected.POST("/voices/refresh", handler.RefreshVoiceSamplesHandler)
 		protected.POST("/burn-sub", middleware.FileValidationMiddleware(), middleware.ProcessAnyStatusMiddleware(), middleware.ProcessStatusMiddleware("burn-sub"), handler.BurnSubHandler)
 		protected.POST("/create-subtitle", middleware.FileValidationMiddleware(), middleware.ProcessAnyStatusMiddleware(), middleware.ProcessStatusMiddleware("create-subtitle"), handler.CreateSubtitleHandler)
 
@@ -81,15 +81,6 @@ func SetupRoutes(r *gin.Engine) {
 
 		// Legacy estimate endpoint
 		protected.POST("/estimate-cost", handler.EstimateProcessVideoCostHandler)
-
-		// Queue management endpoints
-		protected.GET("/queue/status", handler.GetQueueStatus)
-		protected.GET("/queue/worker/status", handler.GetWorkerStatus)
-		protected.GET("/queue/job/:job_id/status", handler.GetJobStatus)
-		protected.GET("/queue/job/:job_id/result", handler.GetJobResult)
-		protected.GET("/queue/job/:job_id/wait", handler.WaitForJobCompletion)
-		protected.POST("/queue/worker/start", handler.StartWorkerService)
-		protected.POST("/queue/worker/stop", handler.StopWorkerService)
 
 		// Feedback endpoints
 		protected.POST("/feedback", feedbackHandler.CreateFeedback)
@@ -135,6 +126,18 @@ func SetupRoutes(r *gin.Engine) {
 			adminProtected.POST("/service-config", handler.AdminAddServiceConfigHandler)
 			adminProtected.PUT("/service-config", handler.AdminUpdateServiceConfigHandler)
 			adminProtected.DELETE("/service-config/:id", handler.AdminDeleteServiceConfigHandler)
+
+			// Pricing tiers management
+			adminProtected.GET("/pricing-tiers", handler.AdminPricingTiersHandler)
+			adminProtected.POST("/pricing-tiers", handler.AdminAddPricingTierHandler)
+			adminProtected.PUT("/pricing-tiers", handler.AdminUpdatePricingTierHandler)
+			adminProtected.DELETE("/pricing-tiers/:id", handler.AdminDeletePricingTierHandler)
+
+			// Service markups management
+			adminProtected.GET("/service-markups", handler.AdminServiceMarkupsHandler)
+			adminProtected.POST("/service-markups", handler.AdminAddServiceMarkupHandler)
+			adminProtected.PUT("/service-markups", handler.AdminUpdateServiceMarkupHandler)
+			adminProtected.DELETE("/service-markups/:service_name", handler.AdminDeleteServiceMarkupHandler)
 
 			// Sepay webhook logs
 			adminProtected.GET("/sepay/webhook-logs", handler.GetSepayWebhookLogs)

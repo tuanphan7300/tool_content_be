@@ -1080,6 +1080,303 @@ func AdminCreditUsageDetailHandler(c *gin.Context) {
 	})
 }
 
+// AdminPricingTiersHandler lấy danh sách pricing tiers
+func AdminPricingTiersHandler(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+
+	var tiers []config.PricingTier
+	err := db.Order("id ASC").Find(&tiers).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách pricing tiers"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"tiers": tiers,
+	})
+}
+
+// AdminUpdatePricingTierHandler cập nhật pricing tier
+func AdminUpdatePricingTierHandler(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+
+	var req struct {
+		ID                int     `json:"id" binding:"required"`
+		Name              string  `json:"name" binding:"required"`
+		BaseMarkup        float64 `json:"base_markup" binding:"required"`
+		MonthlyLimit      *int    `json:"monthly_limit"`
+		SubscriptionPrice float64 `json:"subscription_price"`
+		IsActive          bool    `json:"is_active"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Dữ liệu không hợp lệ: " + err.Error()})
+		return
+	}
+
+	// Kiểm tra tier có tồn tại không
+	var existingTier config.PricingTier
+	err := db.Where("id = ?", req.ID).First(&existingTier).Error
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Pricing tier không tồn tại"})
+		return
+	}
+
+	// Cập nhật tier
+	updates := map[string]interface{}{
+		"name":               req.Name,
+		"base_markup":        req.BaseMarkup,
+		"monthly_limit":      req.MonthlyLimit,
+		"subscription_price": req.SubscriptionPrice,
+		"is_active":          req.IsActive,
+		"updated_at":         time.Now(),
+	}
+
+	err = db.Model(&existingTier).Updates(updates).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể cập nhật pricing tier: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Cập nhật pricing tier thành công",
+		"tier":    existingTier,
+	})
+}
+
+// AdminAddPricingTierHandler thêm pricing tier mới
+func AdminAddPricingTierHandler(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+
+	var req struct {
+		Name              string  `json:"name" binding:"required"`
+		BaseMarkup        float64 `json:"base_markup" binding:"required"`
+		MonthlyLimit      *int    `json:"monthly_limit"`
+		SubscriptionPrice float64 `json:"subscription_price"`
+		IsActive          bool    `json:"is_active"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Dữ liệu không hợp lệ: " + err.Error()})
+		return
+	}
+
+	// Kiểm tra tên tier đã tồn tại chưa
+	var existingTier config.PricingTier
+	err := db.Where("name = ?", req.Name).First(&existingTier).Error
+	if err == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Tên pricing tier đã tồn tại"})
+		return
+	}
+
+	// Tạo tier mới
+	newTier := config.PricingTier{
+		Name:              req.Name,
+		BaseMarkup:        req.BaseMarkup,
+		MonthlyLimit:      req.MonthlyLimit,
+		SubscriptionPrice: req.SubscriptionPrice,
+		IsActive:          req.IsActive,
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+
+	err = db.Create(&newTier).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo pricing tier: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Tạo pricing tier thành công",
+		"tier":    newTier,
+	})
+}
+
+// AdminDeletePricingTierHandler xóa pricing tier
+func AdminDeletePricingTierHandler(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+
+	tierID := c.Param("id")
+	if tierID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID pricing tier không được để trống"})
+		return
+	}
+
+	id, err := strconv.Atoi(tierID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID pricing tier không hợp lệ"})
+		return
+	}
+
+	// Kiểm tra tier có tồn tại không
+	var tier config.PricingTier
+	err = db.Where("id = ?", id).First(&tier).Error
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Pricing tier không tồn tại"})
+		return
+	}
+
+	// Kiểm tra có user nào đang sử dụng tier này không
+	var userCount int64
+	err = db.Model(&config.UserCredits{}).Where("tier_id = ?", id).Count(&userCount).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể kiểm tra user credits"})
+		return
+	}
+
+	if userCount > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Không thể xóa pricing tier đang được sử dụng bởi người dùng"})
+		return
+	}
+
+	// Xóa tier
+	err = db.Delete(&tier).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa pricing tier: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Xóa pricing tier thành công",
+	})
+}
+
+// AdminServiceMarkupsHandler lấy danh sách service markups
+func AdminServiceMarkupsHandler(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+
+	var markups []config.ServiceMarkup
+	err := db.Order("service_name ASC").Find(&markups).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách service markups"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"markups": markups,
+	})
+}
+
+// AdminUpdateServiceMarkupHandler cập nhật service markup
+func AdminUpdateServiceMarkupHandler(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+
+	var req struct {
+		ServiceName   string  `json:"service_name" binding:"required"`
+		BaseMarkup    float64 `json:"base_markup" binding:"required"`
+		PremiumMarkup float64 `json:"premium_markup"`
+		Description   string  `json:"description"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Dữ liệu không hợp lệ: " + err.Error()})
+		return
+	}
+
+	// Kiểm tra service markup có tồn tại không
+	var existingMarkup config.ServiceMarkup
+	err := db.Where("service_name = ?", req.ServiceName).First(&existingMarkup).Error
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Service markup không tồn tại"})
+		return
+	}
+
+	// Cập nhật markup
+	updates := map[string]interface{}{
+		"base_markup":    req.BaseMarkup,
+		"premium_markup": req.PremiumMarkup,
+		"description":    req.Description,
+		"updated_at":     time.Now(),
+	}
+
+	err = db.Model(&existingMarkup).Updates(updates).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể cập nhật service markup: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Cập nhật service markup thành công",
+		"markup":  existingMarkup,
+	})
+}
+
+// AdminAddServiceMarkupHandler thêm service markup mới
+func AdminAddServiceMarkupHandler(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+
+	var req struct {
+		ServiceName   string  `json:"service_name" binding:"required"`
+		BaseMarkup    float64 `json:"base_markup" binding:"required"`
+		PremiumMarkup float64 `json:"premium_markup"`
+		Description   string  `json:"description"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Dữ liệu không hợp lệ: " + err.Error()})
+		return
+	}
+
+	// Kiểm tra service name đã tồn tại chưa
+	var existingMarkup config.ServiceMarkup
+	err := db.Where("service_name = ?", req.ServiceName).First(&existingMarkup).Error
+	if err == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Service name đã tồn tại"})
+		return
+	}
+
+	// Tạo markup mới
+	newMarkup := config.ServiceMarkup{
+		ServiceName:   req.ServiceName,
+		BaseMarkup:    req.BaseMarkup,
+		PremiumMarkup: req.PremiumMarkup,
+		Description:   req.Description,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+
+	err = db.Create(&newMarkup).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo service markup: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Tạo service markup thành công",
+		"markup":  newMarkup,
+	})
+}
+
+// AdminDeleteServiceMarkupHandler xóa service markup
+func AdminDeleteServiceMarkupHandler(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+
+	serviceName := c.Param("service_name")
+	if serviceName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Service name không được để trống"})
+		return
+	}
+
+	// Kiểm tra markup có tồn tại không
+	var markup config.ServiceMarkup
+	err := db.Where("service_name = ?", serviceName).First(&markup).Error
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Service markup không tồn tại"})
+		return
+	}
+
+	// Xóa markup
+	err = db.Delete(&markup).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa service markup: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Xóa service markup thành công",
+	})
+}
+
 // Helper function to generate admin JWT token
 func generateAdminJWT(adminID int, username, role string) (string, time.Time, error) {
 	// This should use the same JWT secret as regular users

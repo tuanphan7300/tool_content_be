@@ -24,12 +24,6 @@ func BurnSubHandler(c *gin.Context) {
 		return
 	}
 
-	// Kiểm tra kích thước file không quá 100MB
-	if videoFile.Size > 100*1024*1024 {
-		util.HandleError(c, http.StatusBadRequest, util.ErrFileTooLarge, nil)
-		return
-	}
-
 	// Nhận file sub
 	subFile, err := c.FormFile("subtitle")
 	if err != nil {
@@ -60,21 +54,6 @@ func BurnSubHandler(c *gin.Context) {
 		return
 	}
 
-	// Kiểm tra duration < 7 phút
-	tempAudioPath, err := util.ProcessfileToDir(c, videoFile, tempDir)
-	if err != nil {
-		util.CleanupDir(tempDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to extract audio"})
-		return
-	}
-	duration, _ := util.GetAudioDuration(tempAudioPath)
-	if duration > 420 {
-		util.CleanupDir(tempDir)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Chỉ cho phép video/audio dưới 7 phút."})
-		return
-	}
-
-	// Nếu pass tất cả kiểm tra, tiếp tục xử lý
 	// Lấy user_id từ token
 	userID := c.GetUint("user_id")
 	if userID == 0 {

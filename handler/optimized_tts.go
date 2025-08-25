@@ -88,7 +88,7 @@ func OptimizedTTSHandler(c *gin.Context) {
 	}
 
 	// Khởi tạo optimized TTS service
-	ttsService, err := service.InitOptimizedTTSService("data/google_clound_tts_api.json", req.MaxConcurrent)
+	ttsService, err := service.InitOptimizedTTSService("", req.MaxConcurrent)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to initialize TTS service: " + err.Error()})
 		return

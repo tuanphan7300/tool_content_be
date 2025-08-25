@@ -59,7 +59,11 @@ func InitVoiceCacheService() (*VoiceCacheService, error) {
 
 	// Khởi tạo Google TTS client
 	ctx := context.Background()
-	client, err := texttospeech.NewClient(ctx, option.WithCredentialsFile("data/google_clound_tts_api.json"))
+	credsPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+	if credsPath == "" {
+		credsPath = "data/google_clound_tts_api.json"
+	}
+	client, err := texttospeech.NewClient(ctx, option.WithCredentialsFile(credsPath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create TTS client: %v", err)
 	}

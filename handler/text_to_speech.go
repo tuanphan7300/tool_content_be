@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	texttospeech "cloud.google.com/go/texttospeech/apiv1"
@@ -200,7 +201,11 @@ func VoicePreviewHandler(c *gin.Context) {
 
 	// Khởi tạo Google TTS client
 	ctx := context.Background()
-	client, err := texttospeech.NewClient(ctx, option.WithCredentialsFile("data/google_clound_tts_api.json"))
+	credsPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+	if credsPath == "" {
+		credsPath = "data/google_clound_tts_api.json"
+	}
+	client, err := texttospeech.NewClient(ctx, option.WithCredentialsFile(credsPath))
 	if err != nil {
 		logrus.Errorf("Failed to create TTS client: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create TTS client"})
@@ -227,6 +232,13 @@ func VoicePreviewHandler(c *gin.Context) {
 	// Gọi Google TTS API
 	resp, err := client.SynthesizeSpeech(ctx, ttsReq)
 	if err != nil {
+		// Friendly message for common billing errors
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "BILLING_DISABLED") || strings.Contains(errMsg, "PermissionDenied") {
+			logrus.Errorf("Google TTS billing/permission error: %v", err)
+			c.JSON(http.StatusPaymentRequired, gin.H{"error": "Google TTS chưa bật thanh toán hoặc quyền bị hạn chế. Vui lòng bật billing cho dự án GCP dùng trong credentials và thử lại."})
+			return
+		}
 		logrus.Errorf("Google TTS API call failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to synthesize speech"})
 		return

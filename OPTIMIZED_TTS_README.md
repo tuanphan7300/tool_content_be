@@ -184,7 +184,7 @@ REDIS_ADDR=localhost:6379
 REDIS_PASSWORD=
 
 # TTS configuration
-GOOGLE_TTS_API_KEY_PATH=data/google_clound_tts_api.json
+GOOGLE_TTS_API_KEY_PATH=data/google_clound_tts_api1.json
 TTS_MAX_CONCURRENT=15
 ```
 

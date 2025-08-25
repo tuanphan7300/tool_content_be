@@ -95,7 +95,11 @@ func TextToSpeech(text string, options TTSOptions) (string, error) {
 
 	// Initialize Google TTS client
 	ctx := context.Background()
-	client, err := texttospeech.NewClient(ctx, option.WithCredentialsFile("data/google_clound_tts_api.json"))
+	credsPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+	if credsPath == "" {
+		credsPath = "data/google_clound_tts_api.json"
+	}
+	client, err := texttospeech.NewClient(ctx, option.WithCredentialsFile(credsPath))
 	if err != nil {
 		return "", fmt.Errorf("Hệ thống đang gặp sự cố, vui lòng thử lại sau")
 	}
@@ -364,7 +368,11 @@ func ConvertSRTToSpeechWithLanguageAndVoice(srtContent string, videoDir string, 
 	// Initialize Google TTS client
 	ctx := context.Background()
 	log.Printf("Creating Google TTS client...")
-	client, err := texttospeech.NewClient(ctx, option.WithCredentialsFile("data/google_clound_tts_api.json"))
+	credsPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+	if credsPath == "" {
+		credsPath = "data/google_clound_tts_api.json"
+	}
+	client, err := texttospeech.NewClient(ctx, option.WithCredentialsFile(credsPath))
 	if err != nil {
 		log.Printf("Failed to create TTS client: %v", err)
 		return "", fmt.Errorf("failed to create TTS client: %v", err)

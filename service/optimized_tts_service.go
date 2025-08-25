@@ -66,6 +66,12 @@ func InitOptimizedTTSService(apiKeyPath string, maxConcurrent int) (*OptimizedTT
 
 	// Khởi tạo Google TTS client
 	ctx := context.Background()
+	if apiKeyPath == "" {
+		apiKeyPath = os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+		if apiKeyPath == "" {
+			apiKeyPath = "data/google_clound_tts_api.json"
+		}
+	}
 	client, err := texttospeech.NewClient(ctx, option.WithCredentialsFile(apiKeyPath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Google TTS client: %v", err)

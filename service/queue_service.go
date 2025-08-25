@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"creator-tool-backend/config"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -36,6 +37,7 @@ type AudioProcessingJob struct {
 	BackgroundVolume float64 `json:"background_volume"`
 	TTSVolume        float64 `json:"tts_volume"`
 	SpeakingRate     float64 `json:"speaking_rate"`
+	VoiceName        string  `json:"voice_name"` // Thêm trường chọn giọng đọc
 }
 
 type QueueService struct {
@@ -50,9 +52,12 @@ var (
 
 // InitQueueService khởi tạo Redis connection và queue service
 func InitQueueService() error {
+	infaConfig := config.InfaConfig{}
+	infaConfig.LoadConfig()
+	redisAdrr := "localhost:" + infaConfig.REDIS_PORT
 	redisClient = redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379", // Có thể config từ env
-		Password: "",               // Có thể config từ env
+		Addr:     redisAdrr, // Có thể config từ env
+		Password: "",        // Có thể config từ env
 		DB:       0,
 	})
 

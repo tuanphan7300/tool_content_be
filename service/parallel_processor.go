@@ -95,6 +95,7 @@ type ProcessVideoParallel struct {
 	BackgroundVolume float64
 	TTSVolume        float64
 	SpeakingRate     float64
+	VoiceName        string // Thêm trường chọn giọng đọc
 	HasCustomSrt     bool
 	CustomSrtPath    string
 	Processor        *ParallelProcessor
@@ -116,6 +117,7 @@ func NewProcessVideoParallel(videoPath, audioPath, videoDir, targetLanguage, api
 		BackgroundVolume: 1.2,
 		TTSVolume:        1.5,
 		SpeakingRate:     1.2,
+		VoiceName:        "", // Sẽ được set sau từ job
 		Processor:        NewParallelProcessor(),
 		APIKey:           apiKey,
 		GeminiKey:        geminiKey,
@@ -483,7 +485,7 @@ func (p *ProcessVideoParallel) processTTSWithOptimizedService(srtContent, target
 	if err != nil {
 		log.Printf("Failed to initialize Optimized TTS Service, falling back to old TTS: %v", err)
 		// Fallback về TTS cũ nếu không thể khởi tạo service mới
-		return ConvertSRTToSpeechWithLanguage(srtContent, p.VideoDir, p.SpeakingRate, targetLanguage)
+		return ConvertSRTToSpeechWithLanguageAndVoice(srtContent, p.VideoDir, p.SpeakingRate, targetLanguage, p.VoiceName)
 	}
 
 	// Tạo job ID cho TTS processing
@@ -499,7 +501,8 @@ func (p *ProcessVideoParallel) processTTSWithOptimizedService(srtContent, target
 		TTSVolume:        p.TTSVolume,
 		SpeakingRate:     p.SpeakingRate,
 		MaxConcurrent:    6,
-		UserID:           0, // Không có user ID trong context này
+		UserID:           0,           // Không có user ID trong context này
+		VoiceName:        p.VoiceName, // Thêm voice selection
 	}
 
 	// Xử lý TTS với concurrent processing
@@ -507,7 +510,7 @@ func (p *ProcessVideoParallel) processTTSWithOptimizedService(srtContent, target
 	if err != nil {
 		log.Printf("Optimized TTS failed, falling back to old TTS: %v", err)
 		// Fallback về TTS cũ nếu service mới thất bại
-		return ConvertSRTToSpeechWithLanguage(srtContent, p.VideoDir, p.SpeakingRate, targetLanguage)
+		return ConvertSRTToSpeechWithLanguageAndVoice(srtContent, p.VideoDir, p.SpeakingRate, targetLanguage, p.VoiceName)
 	}
 
 	log.Printf("Optimized TTS completed successfully: %s", audioPath)
